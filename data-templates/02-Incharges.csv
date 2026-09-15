@@ -1,0 +1,4 @@
+Employee ID,Full Name,Mobile Number,Email,Department Code,Initial Password,Is Active
+INC001,Mohan Raj,9876500001,mohan.raj@company.com,TCD,Flexi@2026,Yes
+INC002,Lakshmi Devi,9876500002,lakshmi.devi@company.com,PACK,Flexi@2026,Yes
+INC003,Suresh Kumar,9876500003,,QC,Flexi@2026,Yes

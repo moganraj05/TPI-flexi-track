@@ -1,0 +1,33 @@
+Sheet,Column Label,Required,Format / Allowed Values,Example,Used In App,Notes
+Departments,Department Name,Yes,Text,TCD Production,Yes,Full department name shown in app
+Departments,Department Code,Yes,Unique uppercase letters/numbers,TCD,Yes,Used to link employees and incharges; no spaces
+Departments,Plant / Unit,No,Text,Plant 1,Future,Factory or unit location
+Departments,Is Active,Yes,Yes or No,Yes,Yes,No = department hidden from new polls
+Incharges,Employee ID,Yes,Unique ID; uppercase recommended,INC001,Yes,Login username for incharge app
+Incharges,Full Name,Yes,Text,Mohan Raj,Yes,Displayed in app
+Incharges,Mobile Number,Yes,10-digit mobile,9876500001,Yes,For contact and future SMS reminders
+Incharges,Email,No,Valid email,mohan.raj@company.com,Future,For reports and admin panel
+Incharges,Department Code,Yes,Must match Departments sheet,TCD,Yes,Incharge manages polls for this department only
+Incharges,Initial Password,Yes,Minimum 6 characters,Flexi@2026,Yes,First login password; worker can change later
+Incharges,Is Active,Yes,Yes or No,Yes,Yes,No = cannot login
+Workers,Employee ID,Yes,Unique ID; uppercase recommended,EMP001,Yes,Login username for worker app
+Workers,Full Name,Yes,Text,Ravi Kumar,Yes,Displayed in app
+Workers,Mobile Number,Yes,10-digit mobile,9876543210,Yes,Required for SMS backup and contact
+Workers,Department Code,Yes,Must match Departments sheet,TCD,Yes,Worker receives polls from this department
+Workers,Assigned Incharge Employee ID,Yes,Must match Incharges sheet,INC001,Reference,HR mapping only; app uses department-level incharge
+Workers,Shift,Yes,morning / night / shift_a / shift_b / shift_c / general,morning,Partial,Used when creating polls; helps HR planning
+Workers,Worker Type,Yes,Flexi or Permanent,Flexi,Future,Only Flexi workers may need daily poll
+Workers,Initial Password,Yes,Minimum 6 characters,Flexi@2026,Yes,Default password for first login
+Workers,Is Active,Yes,Yes or No,Yes,Yes,No = worker removed from poll lists
+Workers,Date of Joining,No,DD-MM-YYYY,15-01-2024,Future,HR record
+Workers,Designation,No,Text,Operator,Future,HR record
+Workers,Remarks,No,Text,Night shift backup,No,Any notes for HR
+Shift Setup,Department Code,Yes,Must match Departments sheet,TCD,Future,Per department shift rules
+Shift Setup,Shift Name,Yes,morning / night / shift_a / shift_b / shift_c,morning,Partial,Must match poll shift names
+Shift Setup,Shift Start Time,Yes,HH:MM (24-hour),06:00,Future,When shift starts
+Shift Setup,Shift End Time,Yes,HH:MM (24-hour),18:00,Future,When shift ends
+Shift Setup,Expected Worker Count,Yes,Number,80,Planning,How many workers normally on this shift
+Shift Setup,Minimum Workers Required,Yes,Number,75,Future,Alert incharge if Coming count is below this
+Shift Setup,Poll Should Open (hours before shift),Yes,Number,4,Planning,When incharge should open poll
+Shift Setup,Poll Should Close (minutes before shift),Yes,Number,120,Planning,Deadline for worker responses
+Shift Setup,Auto Reminder (minutes before close),Yes,Number,30,Yes,Push reminder to pending workers

@@ -1,0 +1,11 @@
+node_modules/
+.env
+dist/
+.expo/
+*.log
+
+# mobile/ is its own independently version-controlled repo (github.com/moganraj05/mobile)
+/mobile/
+
+# Claude Code local session config, not project source
+.claude/settings.local.json

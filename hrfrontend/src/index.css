@@ -1,0 +1,92 @@
+:root {
+  --ink: #121826;
+  --ink-soft: #5b6472;
+  --line: #e4e8f0;
+  --surface: #f3f5fa;
+  --white: #ffffff;
+  --blue-deep: #17306b;
+  --blue: #2b52d6;
+  --blue-bright: #4d7cff;
+  --blue-tint: #eaf0ff;
+  --green: #1e9e5a;
+  --green-tint: #e6f7ee;
+  --red: #e14b4b;
+  --red-tint: #fdecec;
+  --amber: #d99a1b;
+  --amber-tint: #fbf1dc;
+
+  --radius-card: 16px;
+  --radius-control: 10px;
+  --radius-sheet: 26px;
+
+  --shell-max-width: 430px;
+  --topbar-h: 96px;
+  --bottomnav-h: 72px;
+
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--surface);
+  color: var(--ink);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+h1,
+h2,
+h3,
+.font-heading {
+  font-family: 'Manrope', 'Inter', system-ui, sans-serif;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+img {
+  max-width: 100%;
+}
+
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

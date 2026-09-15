@@ -1,0 +1,8 @@
+Department Code,Shift Name,Shift Start Time,Shift End Time,Expected Worker Count,Minimum Workers Required,Poll Should Open (hours before shift),Poll Should Close (minutes before shift),Auto Reminder (minutes before close)
+TCD,morning,06:00,18:00,80,75,4,120,30
+TCD,night,18:00,06:00,80,75,4,120,30
+TCD,shift_a,06:00,14:00,20,18,2,60,30
+TCD,shift_b,14:00,22:00,20,18,2,60,30
+TCD,shift_c,22:00,06:00,20,18,2,60,30
+PACK,morning,07:00,15:00,40,38,3,90,30
+PACK,night,15:00,23:00,40,38,3,90,30

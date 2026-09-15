@@ -1,0 +1,7 @@
+Employee ID,Full Name,Mobile Number,Department Code,Assigned Incharge Employee ID,Shift,Worker Type,Initial Password,Is Active,Date of Joining,Designation,Remarks
+EMP001,Ravi Kumar,9876543210,TCD,INC001,morning,Flexi,Flexi@2026,Yes,15-01-2024,Operator,
+EMP002,Suresh Patel,9876543211,TCD,INC001,morning,Flexi,Flexi@2026,Yes,20-03-2024,Operator,
+EMP003,Anitha Devi,9876543212,TCD,INC001,night,Flexi,Flexi@2026,Yes,10-06-2023,Helper,
+EMP004,Karthik S,9876543213,TCD,INC001,shift_a,Flexi,Flexi@2026,Yes,01-08-2024,Operator,
+EMP005,Priya M,9876543214,PACK,INC002,morning,Flexi,Flexi@2026,Yes,05-02-2024,Packer,
+EMP006,Vel Murugan,9876543215,PACK,INC002,night,Flexi,Flexi@2026,Yes,12-11-2023,Packer,
