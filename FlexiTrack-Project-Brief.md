@@ -1,5 +1,5 @@
 # FlexiTrack — Full Project Brief for AI Review
-
+1. equipment wise rearrange concept- manning:
 **Purpose of this document:** Give another AI (ChatGPT, etc.) enough context to understand FlexiTrack as it exists today, then suggest improvements. This describes **what was actually built**, not only the original 30-day plan.
 
 **Company / context:** TPI (manufacturing). Flexi workers (contract / flexible manpower) must confirm **Yes (coming)** or **No (not coming)** for the **next shift**, so the department incharge can arrange replacements **before the line starts**.

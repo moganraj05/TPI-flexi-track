@@ -1,11 +1,13 @@
-const Poll = require('../models/Poll');
-const Response = require('../models/Response');
+const prisma = require('../config/prisma');
 const { getPollTimeMessage, autoCloseExpiredPolls } = require('../utils/poll');
 const { ensurePollsForWorker } = require('../services/poll-automation.service');
 const { isCurrentlyOnShift, formatShiftLabel } = require('../utils/shift');
+const { formatDept } = require('../utils/pollReport');
+const { parsePagination, buildMeta } = require('../utils/pagination');
+const { emitPollUpdate } = require('../realtime');
 
 const formatPoll = (poll, myResponse = null) => ({
-  id: poll._id,
+  id: poll.id,
   title: poll.title,
   description: poll.description,
   date: poll.date,
@@ -15,8 +17,8 @@ const formatPoll = (poll, myResponse = null) => ({
   status: poll.status,
   opensAt: poll.opensAt,
   closesAt: poll.closesAt,
-  department: poll.department,
-  createdBy: poll.createdBy,
+  department: formatDept(poll.department),
+  createdBy: poll.createdById || null,
   autoCreated: poll.autoCreated !== false,
   myResponse: myResponse
     ? { answer: myResponse.answer, answeredAt: myResponse.answeredAt }
@@ -31,25 +33,27 @@ const workerShiftMatchesPoll = (user, poll) => {
 exports.getTodayPoll = async (req, res, next) => {
   try {
     const now = new Date();
-    const deptId = req.user.department._id || req.user.department;
-    await autoCloseExpiredPolls({ department: deptId });
+    const deptId = req.user.departmentId;
+    await autoCloseExpiredPolls({ departmentId: deptId });
     await ensurePollsForWorker(req.user, now);
 
-    const filter = {
-      department: deptId,
+    const where = {
+      departmentId: deptId,
       status: 'open',
-      opensAt: { $lte: now },
-      closesAt: { $gt: now },
+      opensAt: { lte: now },
+      closesAt: { gt: now },
     };
 
     if (req.user.shiftStart && req.user.shiftEnd) {
-      filter.shiftStart = req.user.shiftStart;
-      filter.shiftEnd = req.user.shiftEnd;
+      where.shiftStart = req.user.shiftStart;
+      where.shiftEnd = req.user.shiftEnd;
     }
 
-    const poll = await Poll.findOne(filter)
-      .sort({ createdAt: -1 })
-      .populate('department', 'name code');
+    const poll = await prisma.poll.findFirst({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: { department: true },
+    });
 
     if (!poll) {
       const onShift =
@@ -76,7 +80,9 @@ exports.getTodayPoll = async (req, res, next) => {
       });
     }
 
-    const myResponse = await Response.findOne({ poll: poll._id, user: req.user._id });
+    const myResponse = await prisma.response.findUnique({
+      where: { pollId_userId: { pollId: poll.id, userId: req.user.id } },
+    });
 
     res.json({
       success: true,
@@ -108,7 +114,7 @@ exports.respondToPoll = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Answer must be yes or no' });
     }
 
-    const poll = await Poll.findById(pollId).populate('department', 'name code');
+    const poll = await prisma.poll.findUnique({ where: { id: pollId }, include: { department: true } });
 
     if (!poll) {
       return res.status(404).json({ success: false, message: 'Poll not found' });
@@ -123,8 +129,8 @@ exports.respondToPoll = async (req, res, next) => {
       return res.status(400).json({ success: false, message: timeMessage });
     }
 
-    const userDeptId = (req.user.department._id || req.user.department).toString();
-    if (poll.department._id.toString() !== userDeptId) {
+    const userDeptId = req.user.departmentId;
+    if (poll.departmentId !== userDeptId) {
       return res.status(403).json({ success: false, message: 'This poll is not for your department' });
     }
 
@@ -132,11 +138,13 @@ exports.respondToPoll = async (req, res, next) => {
       return res.status(403).json({ success: false, message: 'This poll is not for your shift timing' });
     }
 
-    const response = await Response.findOneAndUpdate(
-      { poll: pollId, user: req.user._id },
-      { answer, answeredAt: new Date() },
-      { upsert: true, new: true, runValidators: true }
-    );
+    const response = await prisma.response.upsert({
+      where: { pollId_userId: { pollId, userId: req.user.id } },
+      create: { pollId, userId: req.user.id, answer, answeredAt: new Date() },
+      update: { answer, answeredAt: new Date() },
+    });
+
+    emitPollUpdate({ pollId, departmentId: poll.departmentId, workerId: req.user.id, type: 'response' });
 
     res.json({
       success: true,
@@ -150,34 +158,53 @@ exports.respondToPoll = async (req, res, next) => {
 
 exports.getMyResponses = async (req, res, next) => {
   try {
-    const responses = await Response.find({ user: req.user._id })
-      .sort({ answeredAt: -1 })
-      .limit(90)
-      .populate({
-        path: 'poll',
-        select: 'title date shift shiftStart shiftEnd status department',
-        populate: { path: 'department', select: 'name code' },
-      });
+    // Keeps the previous 90-record window when no page/limit is sent, so the
+    // installed mobile app behaves exactly as before.
+    const pagination = parsePagination(req.query, { defaultLimit: 90 });
+
+    const [total, responses] = await Promise.all([
+      prisma.response.count({ where: { userId: req.user.id } }),
+      prisma.response.findMany({
+        where: { userId: req.user.id },
+        orderBy: [{ answeredAt: 'desc' }, { id: 'desc' }],
+        skip: pagination.skip,
+        take: pagination.take,
+        include: {
+          poll: {
+            select: {
+              id: true,
+              title: true,
+              date: true,
+              shift: true,
+              shiftStart: true,
+              shiftEnd: true,
+              status: true,
+              department: { select: { id: true, name: true, code: true, isActive: true } },
+            },
+          },
+        },
+      }),
+    ]);
 
     const data = responses.map((r) => ({
-      id: r._id,
+      id: r.id,
       answer: r.answer,
       answeredAt: r.answeredAt,
       poll: r.poll
         ? {
-            id: r.poll._id,
+            id: r.poll.id,
             title: r.poll.title,
             date: r.poll.date,
             shift: r.poll.shift,
             shiftStart: r.poll.shiftStart || null,
             shiftEnd: r.poll.shiftEnd || null,
             status: r.poll.status,
-            department: r.poll.department,
+            department: formatDept(r.poll.department),
           }
         : null,
     }));
 
-    res.json({ success: true, data });
+    res.json({ success: true, data, meta: buildMeta(pagination, total) });
   } catch (error) {
     next(error);
   }

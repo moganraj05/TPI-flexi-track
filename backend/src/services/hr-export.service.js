@@ -2,12 +2,9 @@ const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
 
 const NAVY = '0B1F33';
-const GOLD = 'C9A227';
-const TEAL = '0F766E';
 const GREEN = '15803D';
 const RED = 'B91C1C';
 const AMBER = 'B45309';
-const CREAM = 'F7F3EA';
 const WHITE = 'FFFFFF';
 
 const formatDt = (value) => {
@@ -69,83 +66,7 @@ async function buildPollWorkbook(poll, summary) {
   workbook.created = new Date();
   workbook.company = 'TPI';
 
-  const cover = workbook.addWorksheet('Executive Summary', {
-    views: [{ showGridLines: false }],
-    pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 1 },
-  });
-
-  cover.mergeCells('B2:G2');
-  cover.getCell('B2').value = 'TPI  ·  FLEXITRACK HR';
-  cover.getCell('B2').font = { name: 'Calibri', size: 12, bold: true, color: { argb: `FF${GOLD}` } };
-
-  cover.mergeCells('B3:G3');
-  cover.getCell('B3').value = 'Shift Attendance Report';
-  cover.getCell('B3').font = { name: 'Calibri', size: 22, bold: true, color: { argb: `FF${NAVY}` } };
-
-  cover.mergeCells('B4:G4');
-  cover.getCell('B4').value = poll.title;
-  cover.getCell('B4').font = { name: 'Calibri', size: 14, color: { argb: 'FF334155' } };
-
-  const meta = [
-    ['Department', poll.department?.name || '—', 'Code', poll.department?.code || '—'],
-    ['Shift', `${poll.shiftStart || ''}–${poll.shiftEnd || poll.shift}`, 'Poll date', formatDate(poll.date)],
-    ['Opens', formatDt(poll.opensAt), 'Closes', formatDt(poll.closesAt)],
-    ['Status', (poll.status || '').toUpperCase(), 'Generated', formatDt(new Date())],
-  ];
-  meta.forEach((row, i) => {
-    const r = 6 + i;
-    cover.getCell(`B${r}`).value = row[0];
-    cover.getCell(`C${r}`).value = row[1];
-    cover.getCell(`E${r}`).value = row[2];
-    cover.getCell(`F${r}`).value = row[3];
-    ['B', 'E'].forEach((col) => {
-      cover.getCell(`${col}${r}`).font = { bold: true, color: { argb: 'FF64748B' }, size: 10 };
-    });
-    ['C', 'F'].forEach((col) => {
-      cover.getCell(`${col}${r}`).font = { bold: true, color: { argb: `FF${NAVY}` }, size: 11 };
-    });
-  });
-
-  const kpis = [
-    { label: 'Workforce', value: summary.totalWorkers, color: NAVY },
-    { label: 'Coming', value: summary.coming, color: GREEN },
-    { label: 'Not coming', value: summary.notComing, color: RED },
-    { label: 'No response', value: summary.pending, color: AMBER },
-    { label: 'Response %', value: `${summary.responseRate}%`, color: TEAL },
-    { label: 'Attendance %', value: `${summary.attendanceRate}%`, color: TEAL },
-  ];
-  kpis.forEach((kpi, i) => {
-    const col = 2 + i;
-    const labelCell = cover.getCell(12, col);
-    const valueCell = cover.getCell(13, col);
-    labelCell.value = kpi.label;
-    valueCell.value = kpi.value;
-    labelCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${CREAM}` } };
-    valueCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${CREAM}` } };
-    labelCell.font = { bold: true, size: 9, color: { argb: 'FF64748B' } };
-    valueCell.font = { bold: true, size: 18, color: { argb: `FF${kpi.color}` } };
-    labelCell.alignment = { horizontal: 'center' };
-    valueCell.alignment = { horizontal: 'center' };
-  });
-
-  cover.getCell('B15').value = 'Staffing note';
-  cover.getCell('B15').font = { bold: true, color: { argb: `FF${NAVY}` } };
-  cover.mergeCells('B16:G17');
-  const gap = summary.notComing + summary.pending;
-  cover.getCell('B16').value =
-    gap > 0
-      ? `${gap} worker(s) are unavailable or silent for this shift. Plan replacements before the next shift starts.`
-      : 'Full expected coverage from this shift group. No immediate replacement action required.';
-  cover.getCell('B16').alignment = { wrapText: true, vertical: 'top' };
-
-  cover.getColumn(2).width = 16;
-  cover.getColumn(3).width = 28;
-  cover.getColumn(4).width = 16;
-  cover.getColumn(5).width = 16;
-  cover.getColumn(6).width = 22;
-  cover.getColumn(7).width = 16;
-
-  const roster = workbook.addWorksheet('Attendance Roster', {
+  const roster = workbook.addWorksheet('Attendance', {
     views: [{ state: 'frozen', ySplit: 1 }],
     pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
   });
@@ -155,6 +76,9 @@ async function buildPollWorkbook(poll, summary) {
     'Employee ID',
     'Name',
     'Phone',
+    'Equipment',
+    'Process',
+    'Incharge',
     'Shift',
     'Status',
     'Answer',
@@ -170,14 +94,17 @@ async function buildPollWorkbook(poll, summary) {
       member.employeeId,
       member.name,
       member.phone || '',
+      member.equipment || '',
+      member.process || '',
+      member.incharge?.name || '',
       member.shiftStart && member.shiftEnd ? `${member.shiftStart}–${member.shiftEnd}` : poll.shift,
       statusLabel(member.status),
       member.answer === 'yes' ? 'Yes' : member.answer === 'no' ? 'No' : '',
       member.answeredAt ? formatDt(member.answeredAt) : '',
     ]);
     row.height = 20;
-    row.eachCell((cell, col) => styleBody(cell, { align: col === 1 || col === 6 ? 'center' : 'left' }));
-    const statusCell = row.getCell(6);
+    row.eachCell((cell, col) => styleBody(cell, { align: col === 1 || col === 9 ? 'center' : 'left' }));
+    const statusCell = row.getCell(9);
     if (member.status === 'coming') {
       statusCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCFCE7' } };
       statusCell.font = { ...statusCell.font, color: { argb: `FF${GREEN}` }, bold: true };
@@ -195,27 +122,15 @@ async function buildPollWorkbook(poll, summary) {
     { width: 16 },
     { width: 24 },
     { width: 16 },
+    { width: 20 },
+    { width: 18 },
+    { width: 20 },
     { width: 16 },
-    { width: 16 },
-    { width: 12 },
+    { width: 14 },
+    { width: 10 },
     { width: 22 },
   ];
-  roster.autoFilter = { from: 'A1', to: 'H1' };
-
-  const coming = workbook.addWorksheet('Coming');
-  const notComing = workbook.addWorksheet('Not Coming');
-  const pending = workbook.addWorksheet('No Response');
-  const groups = [
-    [coming, (summary.teamRoster || []).filter((m) => m.status === 'coming'), GREEN],
-    [notComing, (summary.teamRoster || []).filter((m) => m.status === 'not_coming'), RED],
-    [pending, (summary.teamRoster || []).filter((m) => m.status === 'pending'), AMBER],
-  ];
-  groups.forEach(([sheet, rows, color]) => {
-    sheet.addRow(['Employee ID', 'Name', 'Phone', 'Status']);
-    fillHeader(sheet.getRow(1), color);
-    rows.forEach((m) => sheet.addRow([m.employeeId, m.name, m.phone || '', statusLabel(m.status)]));
-    sheet.columns = [{ width: 16 }, { width: 24 }, { width: 16 }, { width: 16 }];
-  });
+  roster.autoFilter = { from: 'A1', to: 'K1' };
 
   return workbook;
 }
@@ -316,53 +231,98 @@ async function buildPollPdfBuffer(poll, summary) {
     doc.fillColor('#92400E').fontSize(9).text('ATTENDANCE RATE', 318, 220);
     doc.fontSize(16).text(`${summary.attendanceRate}%`, 318, 236);
 
-    const gap = summary.notComing + summary.pending;
-    doc.fillColor('#0B1F33').fontSize(11).font('Helvetica-Bold').text('HR action', 42, 280);
-    doc.font('Helvetica').fontSize(10).fillColor('#334155').text(
-      gap > 0
-        ? `${gap} worker(s) need follow-up or replacement before the next shift.`
-        : 'Coverage looks complete for this shift group.',
-      42,
-      296,
-      { width: 510 }
-    );
-
-    const tableTop = 328;
-    const cols = [42, 78, 168, 318, 418];
-    const widths = [36, 90, 150, 100, 108];
-    const headers = ['#', 'Emp ID', 'Name', 'Phone', 'Status'];
-    doc.rect(42, tableTop, 512, 22).fill('#0B1F33');
-    doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(8);
-    headers.forEach((h, i) => doc.text(h, cols[i] + 4, tableTop + 7, { width: widths[i] - 8 }));
-
-    let y = tableTop + 22;
+    // --- Team breakdown by incharge: a management summary, not a raw roster ---
     const roster = summary.teamRoster || [];
-    roster.forEach((member, index) => {
-      if (y > 760) {
-        doc.addPage();
-        y = 48;
-        doc.rect(42, y, 512, 22).fill('#0B1F33');
-        doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(8);
-        headers.forEach((h, i) => doc.text(h, cols[i] + 4, y + 7, { width: widths[i] - 8 }));
-        y += 22;
-      }
-      const bg = index % 2 === 0 ? '#F8FAFC' : '#FFFFFF';
-      doc.rect(42, y, 512, 20).fill(bg);
-      const statusColor =
-        member.status === 'coming' ? '#15803D' : member.status === 'not_coming' ? '#B91C1C' : '#B45309';
-      doc.font('Helvetica').fontSize(8).fillColor('#0F172A');
-      const values = [String(index + 1), member.employeeId, member.name, member.phone || '—', statusLabel(member.status)];
-      values.forEach((val, i) => {
-        doc.fillColor(i === 4 ? statusColor : '#0F172A');
-        doc.text(val, cols[i] + 4, y + 6, { width: widths[i] - 8, ellipsis: true });
-      });
-      y += 20;
+    const byIncharge = new Map();
+    roster.forEach((m) => {
+      const key = m.incharge?.name || 'Unassigned';
+      if (!byIncharge.has(key)) byIncharge.set(key, { coming: 0, notComing: 0, pending: 0 });
+      const entry = byIncharge.get(key);
+      if (m.status === 'coming') entry.coming += 1;
+      else if (m.status === 'not_coming') entry.notComing += 1;
+      else entry.pending += 1;
     });
 
+    let y = 280;
+    doc.fillColor('#0B1F33').fontSize(11).font('Helvetica-Bold').text('Team breakdown by incharge', 42, y);
+    y += 18;
+
+    const bCols = [42, 262, 342, 422, 502];
+    const bWidths = [220, 80, 80, 80, 52];
+    const bHeaders = ['Incharge', 'Coming', 'Not coming', 'Pending', 'Total'];
+    doc.rect(42, y, 512, 20).fill('#0B1F33');
+    doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(8);
+    bHeaders.forEach((h, i) => doc.text(h, bCols[i] + 4, y + 6, { width: bWidths[i] - 8 }));
+    y += 20;
+
+    [...byIncharge.entries()].forEach(([name, counts], index) => {
+      const bg = index % 2 === 0 ? '#F8FAFC' : '#FFFFFF';
+      doc.rect(42, y, 512, 18).fill(bg);
+      const total = counts.coming + counts.notComing + counts.pending;
+      const values = [name, String(counts.coming), String(counts.notComing), String(counts.pending), String(total)];
+      const colors = ['#0F172A', '#15803D', '#B91C1C', '#B45309', '#0B1F33'];
+      doc.font('Helvetica').fontSize(8);
+      values.forEach((val, i) => {
+        doc.fillColor(colors[i]).text(val, bCols[i] + 4, y + 5, { width: bWidths[i] - 8, ellipsis: true });
+      });
+      y += 18;
+    });
+
+    // --- Needs follow-up: only the actionable subset, not everyone ---
+    y += 20;
+    const followUp = roster.filter((m) => m.status !== 'coming');
+    doc.fillColor('#0B1F33').fontSize(11).font('Helvetica-Bold').text(
+      `Needs follow-up (${followUp.length})`,
+      42,
+      y
+    );
+    y += 18;
+
+    if (followUp.length === 0) {
+      doc.font('Helvetica').fontSize(9).fillColor('#334155').text('Everyone on this shift has confirmed they are coming.', 42, y);
+    } else {
+      followUp.forEach((member) => {
+        if (y > 740) {
+          doc.addPage();
+          y = 48;
+        }
+        const statusColor = member.status === 'not_coming' ? '#B91C1C' : '#B45309';
+        const statusBg = member.status === 'not_coming' ? '#FEE2E2' : '#FEF3C7';
+
+        doc.roundedRect(42, y, 512, 30, 4).fill('#F8FAFC');
+        doc.fillColor('#0B1F33').font('Helvetica-Bold').fontSize(9.5).text(member.name, 52, y + 5, { width: 200 });
+        doc.font('Helvetica').fontSize(8).fillColor('#64748B').text(
+          `${member.employeeId}  ·  ${member.phone || 'no phone'}  ·  ${member.incharge?.name || 'Unassigned'}`,
+          52,
+          y + 17,
+          { width: 280 }
+        );
+        if (member.equipment || member.process) {
+          doc.fillColor('#94A3B8').fontSize(7.5).text(
+            [member.equipment, member.process].filter(Boolean).join(' · '),
+            340,
+            y + 6,
+            { width: 130 }
+          );
+        }
+        doc.roundedRect(470, y + 8, 74, 15, 7).fill(statusBg);
+        doc.fillColor(statusColor).font('Helvetica-Bold').fontSize(7.5).text(statusLabel(member.status), 470, y + 12, {
+          width: 74,
+          align: 'center',
+        });
+        y += 36;
+      });
+    }
+    // Pin doc.y to where we're about to draw before calling .text() — PDFKit's
+    // own page-break check uses its internal cursor, not just the x/y we pass,
+    // so leaving it stale (from the last explicitly-positioned box above) can
+    // trigger a spurious blank extra page even though this clearly still fits.
+    const footerY = Math.min(y + 30, doc.page.height - 36);
+    doc.y = footerY;
     doc.fontSize(8).fillColor('#94A3B8').text(
       'Confidential · For internal HR and operations use only · FlexiTrack',
       42,
-      doc.page.height - 36,
+      footerY,
       { width: 512, align: 'center' }
     );
 

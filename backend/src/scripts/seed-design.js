@@ -2,12 +2,8 @@
 // from the Claude Design canvas (FlexiTrack.dc.html), plus real Poll/Response
 // records sized to that roster so the HR web console isn't empty on first login.
 require('dotenv').config();
-const connectDB = require('../config/db');
-const Department = require('../models/Department');
-const User = require('../models/User');
-const Poll = require('../models/Poll');
-const Response = require('../models/Response');
-const FollowUp = require('../models/FollowUp');
+const prisma = require('../config/prisma');
+const { hashPassword } = require('../utils/password');
 const { getStartOfDay } = require('../utils/date');
 const { addDays } = require('../utils/shift');
 
@@ -50,65 +46,69 @@ const WORKERS = [
 ];
 
 async function seed() {
-  await connectDB();
-
   console.log('Clearing all existing data (Department, User, Poll, Response, FollowUp)...');
-  await Promise.all([
-    Department.deleteMany({}),
-    User.deleteMany({}),
-    Poll.deleteMany({}),
-    Response.deleteMany({}),
-    FollowUp.deleteMany({}),
-  ]);
+  await prisma.followUp.deleteMany({});
+  await prisma.response.deleteMany({});
+  await prisma.poll.deleteMany({});
+  await prisma.user.deleteMany({});
+  await prisma.department.deleteMany({});
+
+  const hashedPassword = await hashPassword(PASSWORD);
 
   const deptByCode = {};
   for (const p of PLANTS) {
-    deptByCode[p.code] = await Department.create(p);
+    deptByCode[p.code] = await prisma.department.create({ data: p });
   }
 
-  await User.create({
-    employeeId: 'HR001',
-    name: 'HR Admin',
-    email: 'hr.admin@flexitrack.com',
-    phone: '+91 90000 00001',
-    password: PASSWORD,
-    role: 'hr',
+  await prisma.user.create({
+    data: {
+      employeeId: 'HR001',
+      name: 'HR Admin',
+      email: 'hr.admin@flexitrack.com',
+      phone: '+91 90000 00001',
+      password: hashedPassword,
+      role: 'admin', // can manage other HR/admin logins — see hr.controller.js createHrAdmin
+    },
   });
 
   const inchargeByKey = {};
   for (const inc of INCHARGES) {
-    inchargeByKey[inc.key] = await User.create({
-      employeeId: inc.employeeId,
-      name: inc.name,
-      email: inc.email,
-      phone: inc.phone,
-      password: PASSWORD,
-      role: 'incharge',
-      department: deptByCode[inc.plant]._id,
-      shiftStart: inc.shiftStart,
-      shiftEnd: inc.shiftEnd,
-      shiftName: inc.shiftName,
+    inchargeByKey[inc.key] = await prisma.user.create({
+      data: {
+        employeeId: inc.employeeId,
+        name: inc.name,
+        email: inc.email,
+        phone: inc.phone,
+        password: hashedPassword,
+        role: 'incharge',
+        departmentId: deptByCode[inc.plant].id,
+        shiftStart: inc.shiftStart,
+        shiftEnd: inc.shiftEnd,
+        shiftName: inc.shiftName,
+      },
     });
   }
 
   const workerByEmpId = {};
   for (const w of WORKERS) {
     const incDoc = inchargeByKey[w.inchargeKey];
-    workerByEmpId[w.employeeId] = await User.create({
-      employeeId: w.employeeId,
-      name: w.name,
-      email: w.email,
-      phone: w.phone,
-      password: PASSWORD,
-      role: 'worker',
-      department: deptByCode[w.plant]._id,
-      incharge: incDoc._id,
-      equipment: w.equipment,
-      process: w.process,
-      shiftStart: incDoc.shiftStart,
-      shiftEnd: incDoc.shiftEnd,
-      shiftName: incDoc.shiftName,
-      pushToken: w.push ? `ExponentPushToken[seed-${w.employeeId}]` : undefined,
+    workerByEmpId[w.employeeId] = await prisma.user.create({
+      data: {
+        employeeId: w.employeeId,
+        name: w.name,
+        email: w.email,
+        phone: w.phone,
+        password: hashedPassword,
+        role: 'worker',
+        departmentId: deptByCode[w.plant].id,
+        inchargeId: incDoc.id,
+        equipment: w.equipment,
+        process: w.process,
+        shiftStart: incDoc.shiftStart,
+        shiftEnd: incDoc.shiftEnd,
+        shiftName: incDoc.shiftName,
+        pushToken: w.push ? `ExponentPushToken[seed-${w.employeeId}]` : null,
+      },
     });
   }
 
@@ -118,26 +118,30 @@ async function seed() {
   const twoDaysAgo = getStartOfDay(addDays(now, -2));
 
   const createPoll = async ({ plant, shiftStart, shiftEnd, date, status, opensAt, closesAt, answers }) => {
-    const poll = await Poll.create({
-      title: `Next shift attendance (${shiftStart}–${shiftEnd})`,
-      description: 'Confirm if you are coming for your next shift.',
-      department: deptByCode[plant]._id,
-      date,
-      shift: `${shiftStart}–${shiftEnd}`,
-      shiftStart,
-      shiftEnd,
-      status,
-      opensAt,
-      closesAt,
-      autoCreated: true,
+    const poll = await prisma.poll.create({
+      data: {
+        title: `Next shift attendance (${shiftStart}–${shiftEnd})`,
+        description: 'Confirm if you are coming for your next shift.',
+        departmentId: deptByCode[plant].id,
+        date,
+        shift: `${shiftStart}–${shiftEnd}`,
+        shiftStart,
+        shiftEnd,
+        status,
+        opensAt,
+        closesAt,
+        autoCreated: true,
+      },
     });
     for (const [empId, answer] of Object.entries(answers)) {
       if (!answer) continue;
-      await Response.create({
-        poll: poll._id,
-        user: workerByEmpId[empId]._id,
-        answer,
-        answeredAt: status === 'closed' ? closesAt : new Date(),
+      await prisma.response.create({
+        data: {
+          pollId: poll.id,
+          userId: workerByEmpId[empId].id,
+          answer,
+          answeredAt: status === 'closed' ? closesAt : new Date(),
+        },
       });
     }
     return poll;

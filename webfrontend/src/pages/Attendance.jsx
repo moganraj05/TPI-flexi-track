@@ -6,37 +6,58 @@ import { theme, chipStyle, SUCCESS, DANGER, WARNING } from '../theme';
 import { CenteredSpinner } from '../components/common/Spinner';
 import { EmptyState } from '../components/common/EmptyState';
 import { FilterChips, plantFilterOptions } from '../components/common/FilterChips';
+import { PlantSelect } from '../components/common/PlantSelect';
 import { Pagination } from '../components/common/Pagination';
-import { usePagination } from '../utils/usePagination';
-import { formatDate, shiftLabel, toDateInputValue } from '../utils/format';
+import { formatDate, shiftLabel } from '../utils/format';
 
 const PAGE_SIZE = 10;
 
 export function Attendance() {
   const navigate = useNavigate();
   const [plantFilter, setPlantFilter] = useState('all');
+  // "all", or "HH:mm|HH:mm" — the pair is what the API filters on.
   const [shiftFilter, setShiftFilter] = useState('all');
   const [dateFilter, setDateFilter] = useState('');
+  const [page, setPage] = useState(1);
 
-  const { data: departments } = useQuery({ queryKey: ['hr-departments'], queryFn: getDepartments });
-  const { data: polls, isLoading } = useQuery({
-    queryKey: ['hr-polls', 'closed', plantFilter],
-    queryFn: () => getPolls({ status: 'closed', department: plantFilter === 'all' ? undefined : plantFilter }),
+  const [shiftStart, shiftEnd] = shiftFilter === 'all' ? [undefined, undefined] : shiftFilter.split('|');
+
+  const { data: departments } = useQuery({
+    queryKey: ['hr-departments'],
+    queryFn: getDepartments,
+    staleTime: 5 * 60 * 1000,
+  });
+  const { data, isLoading } = useQuery({
+    queryKey: ['hr-polls', 'closed', plantFilter, shiftFilter, dateFilter, page],
+    queryFn: () =>
+      getPolls({
+        status: 'closed',
+        department: plantFilter === 'all' ? undefined : plantFilter,
+        shiftStart,
+        shiftEnd,
+        date: dateFilter || undefined,
+        page,
+        limit: PAGE_SIZE,
+        summary: 'counts',
+      }),
   });
 
+  const pageItems = data?.items || [];
+  const pageCount = data?.meta?.pageCount || 1;
+  const total = data?.meta?.total ?? 0;
+
+  // Built from meta.shifts (a distinct query over the whole filtered set),
+  // not from the rows on this page.
   const shiftOptions = useMemo(() => {
-    const unique = new Set((polls || []).map((p) => shiftLabel(p)));
-    return [{ value: 'all', label: 'All shifts' }, ...[...unique].sort().map((value) => ({ value, label: value }))];
-  }, [polls]);
-
-  const filteredPolls = useMemo(() => {
-    let list = polls || [];
-    if (shiftFilter !== 'all') list = list.filter((p) => shiftLabel(p) === shiftFilter);
-    if (dateFilter) list = list.filter((p) => toDateInputValue(p.date) === dateFilter);
-    return list;
-  }, [polls, shiftFilter, dateFilter]);
-
-  const { page, pageCount, setPage, pageItems } = usePagination(filteredPolls, PAGE_SIZE);
+    const shifts = data?.meta?.shifts || [];
+    return [
+      { value: 'all', label: 'All shifts' },
+      ...shifts.map((s) => ({
+        value: `${s.shiftStart}|${s.shiftEnd}`,
+        label: `${s.shiftStart}–${s.shiftEnd}`,
+      })),
+    ];
+  }, [data?.meta?.shifts]);
 
   const setPlant = (v) => {
     setPlantFilter(v);
@@ -55,8 +76,8 @@ export function Attendance() {
 
   return (
     <>
-      <FilterChips options={plantFilterOptions(departments)} value={plantFilter} onChange={setPlant} />
       <div style={theme.filterRow}>
+        <PlantSelect options={plantFilterOptions(departments)} value={plantFilter} onChange={setPlant} />
         <FilterChips options={shiftOptions} value={shiftFilter} onChange={setShift} />
         <input type="date" value={dateFilter} onChange={(e) => setDate(e.target.value)} style={{ ...theme.input, width: 'auto', padding: '7px 10px' }} />
         {dateFilter && (
@@ -68,7 +89,7 @@ export function Attendance() {
 
       {isLoading ? (
         <CenteredSpinner label="Loading closed polls…" />
-      ) : filteredPolls.length === 0 ? (
+      ) : total === 0 ? (
         <EmptyState title="No closed polls found" message="Try a different plant, shift or date." />
       ) : (
         <>

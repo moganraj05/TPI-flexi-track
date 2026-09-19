@@ -142,4 +142,9 @@ export const theme = {
   detailHeaderRow: { display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 },
   toast: { position: 'fixed', bottom: 24, right: 24, background: PAL.textPrimary, color: PAL.surface, padding: '12px 18px', borderRadius: 10, fontSize: 13, fontWeight: 600, zIndex: 60, boxShadow: '0 4px 14px rgba(0,0,0,0.2)' },
   errorText: { color: DANGER, fontSize: 13, marginTop: 10 },
+
+  modalOverlay: { position: 'fixed', inset: 0, background: 'rgba(8,14,17,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 },
+  modalCard: { width: '100%', maxWidth: 420, background: PAL.surface, borderRadius: 16, padding: 26, boxShadow: '0 20px 50px rgba(0,0,0,0.35)', border: `1px solid ${PAL.border}` },
+  modalIconRing: { width: 44, height: 44, borderRadius: '50%', background: DANGER_SOFT, color: DANGER, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 800, marginBottom: 14 },
+  dangerBtnFilled: { padding: '10px 18px', borderRadius: 8, border: 'none', background: DANGER, color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: FONT },
 };

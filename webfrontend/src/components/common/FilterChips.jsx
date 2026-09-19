@@ -13,5 +13,8 @@ export function FilterChips({ options, value, onChange }) {
 }
 
 export function plantFilterOptions(departments) {
-  return [{ value: 'all', label: 'All plants' }, ...(departments || []).map((d) => ({ value: d.id, label: d.code }))];
+  return [
+    { value: 'all', label: 'All plants' },
+    ...(departments || []).filter((d) => d.isActive !== false).map((d) => ({ value: d.id, label: d.code })),
+  ];
 }

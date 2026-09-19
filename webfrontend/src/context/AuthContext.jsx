@@ -8,15 +8,27 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [status, setStatus] = useState('loading'); // loading | authed | guest
 
-  const logout = useCallback(() => {
+  const clearSession = useCallback(() => {
     clearToken();
     setUser(null);
     setStatus('guest');
   }, []);
 
   useEffect(() => {
-    setUnauthorizedHandler(logout);
-  }, [logout]);
+    // A 401 means the token is already invalid — just drop it locally.
+    // Calling the /logout endpoint here would itself 401 and re-trigger
+    // this same handler.
+    setUnauthorizedHandler(clearSession);
+  }, [clearSession]);
+
+  const logout = useCallback(async () => {
+    try {
+      await hrApi.logout();
+    } catch {
+      // Token may already be invalid/expired — clear the local session anyway.
+    }
+    clearSession();
+  }, [clearSession]);
 
   useEffect(() => {
     const token = getToken();

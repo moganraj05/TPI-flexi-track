@@ -22,6 +22,10 @@ export function Dashboard() {
     queryKey: ['hr-dashboard'],
     queryFn: getDashboard,
     refetchInterval: 30000,
+    // "Live overview" — always treated as stale so a fresh mount (or a
+    // Socket.IO poll:update invalidation while mounted) refetches right
+    // away, instead of the app-wide 30s staleTime holding it back.
+    staleTime: 0,
   });
 
   useEffect(() => {

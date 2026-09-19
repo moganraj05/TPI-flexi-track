@@ -1,21 +1,20 @@
-const Poll = require('../models/Poll');
-const Response = require('../models/Response');
-const User = require('../models/User');
+const crypto = require('node:crypto');
+const prisma = require('../config/prisma');
 const { getStartOfDay } = require('../utils/date');
 const {
   isValidShiftTime,
   getPollWindow,
   formatShiftLabel,
-  DEFAULT_SHIFT_START,
-  DEFAULT_SHIFT_END,
 } = require('../utils/shift');
 const { notifyShiftWorkers } = require('./notification.service');
+const { emitPollUpdate } = require('../realtime');
+const logger = require('../utils/logger');
 
 const openDelayMinutes = () => Number(process.env.POLL_OPEN_AFTER_SHIFT_MINUTES) || 30;
 const closeBeforeHours = () => Number(process.env.POLL_CLOSE_BEFORE_NEXT_SHIFT_HOURS) || 2;
 
-const matchingWorkersQuery = (departmentId, shiftStart, shiftEnd) => ({
-  department: departmentId,
+const matchingWorkersWhere = (departmentId, shiftStart, shiftEnd) => ({
+  departmentId,
   role: 'worker',
   isActive: true,
   shiftStart,
@@ -32,43 +31,6 @@ const formatNextShift = (date) =>
     hour12: true,
   });
 
-async function migrateManualPollsAndShifts() {
-  try {
-    await Poll.collection.dropIndex('uniq_shift_poll');
-  } catch {
-    // Index may not exist yet.
-  }
-
-  const oldPolls = await Poll.find({
-    $or: [{ autoCreated: { $ne: true } }, { shiftStart: { $in: [null, ''] } }, { shiftStart: { $exists: false } }],
-  }).select('_id');
-  const ids = oldPolls.map((p) => p._id);
-  if (ids.length) {
-    await Response.deleteMany({ poll: { $in: ids } });
-    await Poll.deleteMany({ _id: { $in: ids } });
-    console.log(`[migrate] Removed ${ids.length} old poll(s)`);
-  }
-
-  const shiftResult = await User.updateMany(
-    {
-      role: 'worker',
-      $or: [
-        { shiftStart: { $exists: false } },
-        { shiftStart: null },
-        { shiftStart: '' },
-        { shiftEnd: { $exists: false } },
-        { shiftEnd: null },
-        { shiftEnd: '' },
-      ],
-    },
-    { $set: { shiftStart: DEFAULT_SHIFT_START, shiftEnd: DEFAULT_SHIFT_END } }
-  );
-
-  if (shiftResult.modifiedCount) {
-    console.log(`[migrate] Set default 08:00–20:00 shift on ${shiftResult.modifiedCount} worker(s)`);
-  }
-}
-
 async function ensureShiftPoll({ departmentId, shiftStart, shiftEnd, now = new Date() }) {
   if (!isValidShiftTime(shiftStart) || !isValidShiftTime(shiftEnd) || shiftStart === shiftEnd) {
     return null;
@@ -82,76 +44,81 @@ async function ensureShiftPoll({ departmentId, shiftStart, shiftEnd, now = new D
   if (!window.valid) return null;
   if (now < window.opensAt || now >= window.closesAt) return null;
 
-  const workerCount = await User.countDocuments(matchingWorkersQuery(departmentId, shiftStart, shiftEnd));
+  const workerCount = await prisma.user.count({ where: matchingWorkersWhere(departmentId, shiftStart, shiftEnd) });
   if (workerCount === 0) return null;
 
   const pollDate = getStartOfDay(window.nextStart);
   const shiftLabel = formatShiftLabel(shiftStart, shiftEnd);
 
-  const existing = await Poll.findOne({
-    department: departmentId,
-    shiftStart,
-    shiftEnd,
-    date: pollDate,
+  const existing = await prisma.poll.findFirst({
+    where: { departmentId, shiftStart, shiftEnd, date: pollDate },
   });
 
   if (existing) return existing;
 
   try {
-    const poll = await Poll.create({
-      title: `Next shift attendance (${shiftLabel})`,
-      description: `Confirm if you are coming for your next shift starting ${formatNextShift(window.nextStart)}.`,
-      department: departmentId,
-      date: pollDate,
-      shift: shiftLabel,
-      shiftStart,
-      shiftEnd,
-      status: 'open',
-      opensAt: window.opensAt,
-      closesAt: window.closesAt,
-      autoCreated: true,
-      sendReminder: true,
-      reminderMinutesBefore: 30,
+    const poll = await prisma.poll.create({
+      data: {
+        title: `Next shift attendance (${shiftLabel})`,
+        description: `Confirm if you are coming for your next shift starting ${formatNextShift(window.nextStart)}.`,
+        departmentId,
+        date: pollDate,
+        shift: shiftLabel,
+        shiftStart,
+        shiftEnd,
+        status: 'open',
+        opensAt: window.opensAt,
+        closesAt: window.closesAt,
+        autoCreated: true,
+        sendReminder: true,
+        reminderMinutesBefore: 30,
+      },
     });
 
-    const populated = await Poll.findById(poll._id).populate('department', 'name code');
+    const populated = await prisma.poll.findUnique({ where: { id: poll.id }, include: { department: true } });
     const deptName = populated.department?.name || 'Your department';
 
     await notifyShiftWorkers(departmentId, shiftStart, shiftEnd, {
       title: 'Attendance Poll Open',
       body: `${deptName}: Confirm Yes or No for your next ${shiftLabel} shift.`,
-      data: { pollId: poll._id.toString(), type: 'poll_created' },
+      data: { pollId: poll.id, type: 'poll_created' },
     });
 
-    console.log(
-      `[auto-poll] Created ${shiftLabel} poll for dept ${departmentId} (closes ${window.closesAt.toISOString()})`
-    );
+    logger.info('poll.auto_created', {
+      pollId: poll.id,
+      departmentId,
+      shiftLabel,
+      closesAt: window.closesAt.toISOString(),
+    });
+
+    emitPollUpdate({ pollId: poll.id, departmentId, type: 'created' });
 
     return poll;
   } catch (error) {
-    if (error.code === 11000) {
-      return Poll.findOne({ department: departmentId, shiftStart, shiftEnd, date: pollDate });
+    if (error.code === 'P2002') {
+      return prisma.poll.findFirst({ where: { departmentId, shiftStart, shiftEnd, date: pollDate } });
     }
     throw error;
   }
 }
 
 async function processAllShiftPolls(now = new Date()) {
-  const workers = await User.find({
-    role: 'worker',
-    isActive: true,
-    shiftStart: { $exists: true, $nin: [null, ''] },
-    shiftEnd: { $exists: true, $nin: [null, ''] },
-  }).select('department shiftStart shiftEnd');
+  const workers = await prisma.user.findMany({
+    where: {
+      role: 'worker',
+      isActive: true,
+      NOT: [{ shiftStart: null }, { shiftStart: '' }, { shiftEnd: null }, { shiftEnd: '' }],
+    },
+    select: { departmentId: true, shiftStart: true, shiftEnd: true },
+  });
 
   const groups = new Map();
   for (const worker of workers) {
     if (!isValidShiftTime(worker.shiftStart) || !isValidShiftTime(worker.shiftEnd)) continue;
-    const deptId = (worker.department._id || worker.department).toString();
-    const key = `${deptId}|${worker.shiftStart}|${worker.shiftEnd}`;
+    const key = `${worker.departmentId}|${worker.shiftStart}|${worker.shiftEnd}`;
     if (!groups.has(key)) {
       groups.set(key, {
-        departmentId: worker.department._id || worker.department,
+        departmentId: worker.departmentId,
         shiftStart: worker.shiftStart,
         shiftEnd: worker.shiftEnd,
       });
@@ -164,11 +131,11 @@ async function processAllShiftPolls(now = new Date()) {
     if (poll) created += 1;
   }
 
-  return created;
+  return { groupsConsidered: groups.size, created };
 }
 
 async function ensurePollsForWorker(worker, now = new Date()) {
-  const departmentId = worker.department._id || worker.department;
+  const departmentId = worker.departmentId;
   if (!worker.shiftStart || !worker.shiftEnd) return null;
   return ensureShiftPoll({
     departmentId,
@@ -179,11 +146,10 @@ async function ensurePollsForWorker(worker, now = new Date()) {
 }
 
 async function ensurePollsForDepartment(departmentId, now = new Date()) {
-  const workers = await User.find({
-    department: departmentId,
-    role: 'worker',
-    isActive: true,
-  }).select('shiftStart shiftEnd');
+  const workers = await prisma.user.findMany({
+    where: { departmentId, role: 'worker', isActive: true },
+    select: { shiftStart: true, shiftEnd: true },
+  });
 
   const seen = new Set();
   for (const worker of workers) {
@@ -200,20 +166,71 @@ async function ensurePollsForDepartment(departmentId, now = new Date()) {
 }
 
 const startPollAutomation = (intervalMs = 60 * 1000) => {
-  const run = () => {
-    processAllShiftPolls().catch((err) => {
-      console.error('[auto-poll] Scheduler error:', err.message);
+  // A tick's own DB work (counting workers per shift, per-department
+  // findFirst-then-create, sending push notifications) can occasionally run
+  // longer than intervalMs, especially under load — without this guard,
+  // setInterval would start a second, fully overlapping run on top of the
+  // first. ensureShiftPoll's unique-constraint fallback already makes a
+  // literal duplicate poll impossible even if that happened, but overlap
+  // still means doubled DB/API load and log noise for the same window, so
+  // it's worth actually preventing rather than just tolerating.
+  let running = false;
+  let inFlight = Promise.resolve();
+  let stopped = false;
+
+  const runTick = () => {
+    if (stopped) return;
+
+    if (running) {
+      logger.warn('poll.automation_tick_skipped', { reason: 'previous_tick_still_running' });
+      return;
+    }
+
+    running = true;
+    // Each tick gets its own correlation ID (job:auto-poll:<uuid>) — so if
+    // this run's processAllShiftPolls creates/closes polls, every poll.update
+    // log from that run traces back to the same id, the same way a request's
+    // logs all share one requestId.
+    inFlight = logger.runWithContext({ requestId: `job:auto-poll:${crypto.randomUUID()}` }, async () => {
+      const startedAt = Date.now();
+      logger.info('poll.automation_tick_started', {});
+      try {
+        const result = await processAllShiftPolls();
+        logger.info('poll.automation_tick_succeeded', {
+          ...result,
+          durationMs: Date.now() - startedAt,
+        });
+      } catch (err) {
+        logger.error('poll.automation_tick_failed', {
+          error: err.message,
+          stack: err.stack,
+          durationMs: Date.now() - startedAt,
+        });
+      } finally {
+        running = false;
+      }
     });
   };
 
-  run();
-  const timer = setInterval(run, intervalMs);
-  console.log(`[auto-poll] Scheduler started (every ${intervalMs / 1000}s)`);
-  return timer;
+  runTick();
+  const timer = setInterval(runTick, intervalMs);
+  logger.info('poll.automation_started', { intervalMs });
+
+  return {
+    // Stops scheduling new ticks immediately (synchronously) and returns a
+    // promise that resolves once whatever tick is currently in flight (if
+    // any) has finished — so a caller (server shutdown) can be sure no work
+    // is left running before it disconnects Prisma.
+    stop: () => {
+      stopped = true;
+      clearInterval(timer);
+      logger.info('poll.automation_stopped', {});
+      return inFlight;
+    },
+  };
 };
 
 module.exports = {
-  migrateManualPollsAndShifts,
   ensureShiftPoll,
   processAllShiftPolls,
   ensurePollsForWorker,

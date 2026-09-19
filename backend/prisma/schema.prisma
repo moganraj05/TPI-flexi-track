@@ -1,0 +1,159 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  worker
+  incharge
+  supervisor
+  admin
+  superadmin
+  hr
+}
+
+enum PollStatus {
+  open
+  closed
+}
+
+enum ResponseAnswer {
+  yes
+  no
+}
+
+enum FollowUpStatus {
+  pending
+  contacted
+  confirmed_coming
+  confirmed_not_coming
+}
+
+model Department {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  code      String   @unique
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  users User[]
+  polls Poll[]
+
+  @@map("departments")
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  employeeId   String   @unique @map("employee_id")
+  name         String
+  email        String?  @unique
+  phone        String?
+  password     String
+  role         Role     @default(worker)
+  departmentId String?  @map("department_id") @db.Uuid
+  department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  inchargeId   String?  @map("incharge_id") @db.Uuid
+  incharge     User?    @relation("WorkerIncharge", fields: [inchargeId], references: [id], onDelete: SetNull)
+  reports      User[]   @relation("WorkerIncharge")
+  shiftStart   String?  @map("shift_start")
+  shiftEnd     String?  @map("shift_end")
+  shiftName    String?  @map("shift_name")
+  equipment    String?
+  process      String?
+  pushToken    String?  @map("push_token")
+  isActive     Boolean  @default(true) @map("is_active")
+  tokenVersion Int      @default(0) @map("token_version")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  pollsCreated      Poll[]     @relation("PollCreatedBy")
+  responses         Response[]
+  followUpsAsWorker FollowUp[] @relation("FollowUpWorker")
+  followUpsUpdated  FollowUp[] @relation("FollowUpUpdatedBy")
+
+  @@map("users")
+}
+
+model Poll {
+  id                    String     @id @default(uuid()) @db.Uuid
+  title                 String
+  description           String?
+  departmentId          String     @map("department_id") @db.Uuid
+  department            Department @relation(fields: [departmentId], references: [id])
+  date                  DateTime   @db.Date
+  shift                 String     @default("general")
+  shiftStart            String?    @map("shift_start")
+  shiftEnd              String?    @map("shift_end")
+  status                PollStatus @default(open)
+  opensAt               DateTime   @map("opens_at")
+  closesAt              DateTime   @map("closes_at")
+  createdById           String?    @map("created_by") @db.Uuid
+  createdBy             User?      @relation("PollCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  autoCreated           Boolean    @default(true) @map("auto_created")
+  sendReminder          Boolean    @default(true) @map("send_reminder")
+  reminderMinutesBefore Int        @default(30) @map("reminder_minutes_before")
+  reminderSentAt        DateTime?  @map("reminder_sent_at")
+  createdAt             DateTime   @default(now()) @map("created_at")
+  updatedAt              DateTime   @updatedAt @map("updated_at")
+
+  responses Response[]
+  followUps FollowUp[]
+
+  @@unique([departmentId, shiftStart, shiftEnd, date], map: "uniq_shift_poll")
+  // Covers the single hottest query pattern in the app: "open polls whose
+  // window contains now" (every worker's live-poll check, every HR
+  // dashboard/live-board load, every realtime-triggered refetch) and the
+  // auto-close sweep (status='open', closesAt<=now) that runs on nearly
+  // every request. Both lead with status, which is why one index serves
+  // both instead of needing two.
+  @@index([status, closesAt])
+  @@map("polls")
+}
+
+model Response {
+  id         String         @id @default(uuid()) @db.Uuid
+  pollId     String         @map("poll_id") @db.Uuid
+  poll       Poll           @relation(fields: [pollId], references: [id])
+  userId     String         @map("user_id") @db.Uuid
+  user       User           @relation(fields: [userId], references: [id])
+  answer     ResponseAnswer
+  answeredAt DateTime       @default(now()) @map("answered_at")
+  createdAt  DateTime       @default(now()) @map("created_at")
+  updatedAt  DateTime       @updatedAt @map("updated_at")
+
+  @@unique([pollId, userId])
+  // Response is the fastest-growing table in the schema (one row per
+  // worker per poll, indefinitely) — this covers "my response history"
+  // (every worker's History tab: userId filter, answeredAt sort, take 90),
+  // which the (pollId, userId) unique index above doesn't serve since
+  // userId isn't its leading column.
+  @@index([userId, answeredAt])
+  @@map("responses")
+}
+
+model FollowUp {
+  id          String         @id @default(uuid()) @db.Uuid
+  workerId    String         @map("worker_id") @db.Uuid
+  worker      User           @relation("FollowUpWorker", fields: [workerId], references: [id])
+  pollId      String         @map("poll_id") @db.Uuid
+  poll        Poll           @relation(fields: [pollId], references: [id])
+  status      FollowUpStatus @default(pending)
+  note        String?
+  updatedById String?        @map("updated_by") @db.Uuid
+  updatedBy   User?          @relation("FollowUpUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+
+  @@unique([workerId, pollId])
+  // getFollowUps filters by `pollId IN (...)` across the open polls — not
+  // served by the (workerId, pollId) unique index above since pollId isn't
+  // its leading column.
+  @@index([pollId])
+  @@map("followups")
+}

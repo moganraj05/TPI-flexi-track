@@ -5,8 +5,8 @@ import { theme, chipStyle } from '../theme';
 import { CenteredSpinner } from '../components/common/Spinner';
 import { EmptyState } from '../components/common/EmptyState';
 import { FilterChips, plantFilterOptions } from '../components/common/FilterChips';
+import { PlantSelect } from '../components/common/PlantSelect';
 import { Pagination } from '../components/common/Pagination';
-import { usePagination } from '../utils/usePagination';
 import { formatDate, shiftLabel } from '../utils/format';
 
 const PAGE_SIZE = 10;
@@ -14,16 +14,30 @@ const PAGE_SIZE = 10;
 export function Reports() {
   const [plantFilter, setPlantFilter] = useState('all');
   const [status, setStatus] = useState('closed');
+  const [page, setPage] = useState(1);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
 
-  const { data: departments } = useQuery({ queryKey: ['hr-departments'], queryFn: getDepartments });
-  const { data: polls, isLoading } = useQuery({
-    queryKey: ['hr-polls', status, plantFilter],
-    queryFn: () => getPolls({ status, department: plantFilter === 'all' ? undefined : plantFilter }),
+  const { data: departments } = useQuery({
+    queryKey: ['hr-departments'],
+    queryFn: getDepartments,
+    staleTime: 5 * 60 * 1000,
+  });
+  const { data, isLoading } = useQuery({
+    queryKey: ['hr-polls', status, plantFilter, page],
+    queryFn: () =>
+      getPolls({
+        status,
+        department: plantFilter === 'all' ? undefined : plantFilter,
+        page,
+        limit: PAGE_SIZE,
+        summary: 'counts',
+      }),
   });
 
-  const { page, pageCount, setPage, pageItems } = usePagination(polls || [], PAGE_SIZE);
+  const pageItems = data?.items || [];
+  const pageCount = data?.meta?.pageCount || 1;
+  const total = data?.meta?.total ?? 0;
 
   const runExport = async (fn, key) => {
     setBusy(key);
@@ -56,7 +70,7 @@ export function Reports() {
       {error && <div style={theme.errorText}>{error}</div>}
 
       <div style={theme.filterRow}>
-        <FilterChips
+        <PlantSelect
           options={plantFilterOptions(departments)}
           value={plantFilter}
           onChange={(v) => {
@@ -80,7 +94,7 @@ export function Reports() {
       <div style={theme.sectionHeader}>Per-poll exports</div>
       {isLoading ? (
         <CenteredSpinner label="Loading polls…" />
-      ) : !polls || polls.length === 0 ? (
+      ) : total === 0 ? (
         <EmptyState title="No polls found" message="Try a different plant or status." />
       ) : (
         <>

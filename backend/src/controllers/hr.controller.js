@@ -1,41 +1,48 @@
-const jwt = require('jsonwebtoken');
-const Poll = require('../models/Poll');
-const Response = require('../models/Response');
-const User = require('../models/User');
-const Department = require('../models/Department');
+const prisma = require('../config/prisma');
 const { autoCloseExpiredPolls } = require('../utils/poll');
-const { getPollSummary, formatPoll, formatDept } = require('../utils/pollReport');
-const FollowUp = require('../models/FollowUp');
+const {
+  getPollSummary,
+  summarizePolls,
+  summarizePollCounts,
+  formatPoll,
+  formatDept,
+} = require('../utils/pollReport');
+const { parsePagination, buildMeta } = require('../utils/pagination');
 const { buildPollExcelBuffer, buildPollPdfBuffer, buildRangeExcelBuffer } = require('../services/hr-export.service');
+const { isValidShiftTime, DEFAULT_SHIFT_START, DEFAULT_SHIFT_END } = require('../utils/shift');
+const { signToken } = require('../utils/jwt');
+const { comparePassword, hashPassword } = require('../utils/password');
+const { emitPollUpdate, emitFollowUpUpdate } = require('../realtime');
+
+const parseShiftTimes = (body, fallbackStart, fallbackEnd) => {
+  const shiftStart = body.shiftStart !== undefined ? String(body.shiftStart).trim() : fallbackStart;
+  const shiftEnd = body.shiftEnd !== undefined ? String(body.shiftEnd).trim() : fallbackEnd;
+
+  if (!isValidShiftTime(shiftStart) || !isValidShiftTime(shiftEnd)) {
+    return { error: 'Shift times must be in HH:mm format (e.g. 08:00)' };
+  }
+  if (shiftStart === shiftEnd) {
+    return { error: 'Shift start and end cannot be the same time' };
+  }
+  return { shiftStart, shiftEnd };
+};
 
 const HR_ROLES = ['hr', 'admin', 'superadmin'];
 
-const signToken = (userId) =>
-  jwt.sign({ id: userId }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN || '365d',
-  });
-
 const formatHrUser = (user) => ({
-  id: String(user._id),
+  id: user.id,
   employeeId: user.employeeId,
   name: user.name,
   email: user.email || null,
   phone: user.phone || '',
   role: user.role,
+  isActive: user.isActive !== false,
 });
-
-const idOf = (value) => {
-  if (!value) return '';
-  if (typeof value === 'string') return value;
-  if (value._id) return String(value._id);
-  if (value.id) return String(value.id);
-  return String(value);
-};
 
 const formatIncharge = (inc) => {
   if (!inc) return null;
   return {
-    id: idOf(inc),
+    id: inc.id,
     name: inc.name,
     employeeId: inc.employeeId,
     shiftStart: inc.shiftStart || null,
@@ -45,14 +52,14 @@ const formatIncharge = (inc) => {
 };
 
 const formatWorker = (w) => ({
-  id: idOf(w),
+  id: w.id,
   name: w.name,
   employeeId: w.employeeId,
   email: w.email || '',
   phone: w.phone || '',
   role: w.role,
   department: formatDept(w.department),
-  incharge: w.incharge && w.incharge._id ? formatIncharge(w.incharge) : null,
+  incharge: w.incharge ? formatIncharge(w.incharge) : null,
   equipment: w.equipment || '',
   process: w.process || '',
   shiftStart: w.shiftStart || null,
@@ -62,26 +69,37 @@ const formatWorker = (w) => ({
   hasNotifications: !!(w.pushToken && String(w.pushToken).startsWith('ExponentPushToken[')),
 });
 
-const summarizeLivePolls = async (polls) =>
-  Promise.all(
-    polls
-      .filter((poll) => poll.department)
-      .map(async (poll) => {
-        const summary = await getPollSummary(poll, poll.department._id || poll.department);
-        return { ...formatPoll(poll), department: formatDept(poll.department), summary };
-      })
-  );
+const summarizeLivePolls = async (polls) => {
+  const withDept = polls.filter((poll) => poll.department);
+  const summaries = await summarizePolls(withDept);
+  return withDept.map((poll) => ({
+    ...formatPoll(poll),
+    department: formatDept(poll.department),
+    summary: summaries.get(poll.id),
+  }));
+};
 
-const departmentStats = (dept, workers, incharges, live) => {
-  const did = idOf(dept);
-  const deptLive = live.filter((p) => idOf(p.department) === did);
+// Per-department head counts come from grouped COUNT queries rather than
+// from fetching every worker/incharge row and filtering in JS.
+const countsByDepartment = async (role) => {
+  const groups = await prisma.user.groupBy({
+    by: ['departmentId'],
+    where: { role, isActive: true },
+    _count: { _all: true },
+  });
+  return new Map(groups.map((group) => [group.departmentId, group._count._all]));
+};
+
+const departmentStats = (dept, workerCounts, inchargeCounts, live) => {
+  const did = dept.id;
+  const deptLive = live.filter((p) => p.department?.id === did);
   return {
     id: did,
     name: dept.name,
     code: dept.code,
     isActive: dept.isActive !== false,
-    workers: workers.filter((w) => idOf(w.department) === did).length,
-    incharges: incharges.filter((i) => idOf(i.department) === did).length,
+    workers: workerCounts.get(did) || 0,
+    incharges: inchargeCounts.get(did) || 0,
     livePolls: deptLive.length,
     coming: deptLive.reduce((n, p) => n + (p.summary?.coming || 0), 0),
     notComing: deptLive.reduce((n, p) => n + (p.summary?.notComing || 0), 0),
@@ -89,16 +107,61 @@ const departmentStats = (dept, workers, incharges, live) => {
   };
 };
 
+const pollInclude = {
+  department: true,
+  createdBy: { select: { id: true, name: true, employeeId: true } },
+};
+
+const inchargeSelect = {
+  id: true,
+  name: true,
+  employeeId: true,
+  shiftStart: true,
+  shiftEnd: true,
+  shiftName: true,
+};
+
+const departmentSelect = { id: true, name: true, code: true, isActive: true };
+
+// Exactly the columns formatWorker reads. Replaces `include`, which pulls
+// every User column — password hash included — for every row in a list.
+const personSelect = {
+  id: true,
+  name: true,
+  employeeId: true,
+  email: true,
+  phone: true,
+  role: true,
+  equipment: true,
+  process: true,
+  shiftStart: true,
+  shiftEnd: true,
+  shiftName: true,
+  isActive: true,
+  pushToken: true,
+  department: { select: departmentSelect },
+  incharge: { select: inchargeSelect },
+};
+
+// Columns formatHrUser reads.
+const hrUserSelect = {
+  id: true,
+  employeeId: true,
+  name: true,
+  email: true,
+  phone: true,
+  role: true,
+  isActive: true,
+};
+
 const loadPollOr404 = async (pollId, res) => {
-  const poll = await Poll.findById(pollId)
-    .populate('department', 'name code')
-    .populate('createdBy', 'name employeeId');
+  const poll = await prisma.poll.findUnique({ where: { id: pollId }, include: pollInclude });
   if (!poll) {
     res.status(404).json({ success: false, message: 'Poll not found' });
     return null;
   }
-  await autoCloseExpiredPolls({ _id: poll._id });
-  return Poll.findById(poll._id).populate('department', 'name code').populate('createdBy', 'name employeeId');
+  await autoCloseExpiredPolls({ id: poll.id });
+  return prisma.poll.findUnique({ where: { id: poll.id }, include: pollInclude });
 };
 
 exports.login = async (req, res, next) => {
@@ -112,18 +175,17 @@ exports.login = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Email and password are required' });
     }
 
-    const user = await User.findOne({ email }).select('+password').populate('department', 'name code');
+    const user = await prisma.user.findUnique({ where: { email } });
     if (!user || !user.isActive || !HR_ROLES.includes(user.role)) {
       return res.status(401).json({ success: false, message: 'Invalid HR credentials' });
     }
 
-    const isMatch = await user.comparePassword(password);
+    const isMatch = await comparePassword(password, user.password);
     if (!isMatch) {
       return res.status(401).json({ success: false, message: 'Invalid HR credentials' });
     }
 
-    const token = signToken(user._id);
-    user.password = undefined;
+    const token = signToken(user);
     res.json({ success: true, data: { token, user: formatHrUser(user) } });
   } catch (error) {
     next(error);
@@ -134,19 +196,46 @@ exports.getMe = async (req, res) => {
   res.json({ success: true, data: formatHrUser(req.user) });
 };
 
+exports.logout = async (req, res, next) => {
+  try {
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data: { tokenVersion: { increment: 1 } },
+    });
+    res.json({ success: true, message: 'Logged out' });
+  } catch (error) {
+    next(error);
+  }
+};
+
 exports.getDashboard = async (req, res, next) => {
   try {
     await autoCloseExpiredPolls();
     const now = new Date();
 
-    const [departments, workers, incharges, openPolls, closedPolls] = await Promise.all([
-      Department.find({ isActive: { $ne: false } }).select('name code'),
-      User.find({ role: 'worker', isActive: true }).select('name employeeId department shiftStart shiftEnd phone pushToken'),
-      User.find({ role: 'incharge', isActive: true }).select('name employeeId department'),
-      Poll.find({ status: 'open', opensAt: { $lte: now }, closesAt: { $gt: now } })
-        .populate('department', 'name code')
-        .sort({ closesAt: 1 }),
-      Poll.find({ status: 'closed' }).sort({ closesAt: -1 }).limit(12).populate('department', 'name code'),
+    const [departments, workerCounts, inchargeCounts, workerTotal, inchargeTotal, notified, openPolls, closedPolls] =
+      await Promise.all([
+      prisma.department.findMany({ where: { isActive: true }, select: { id: true, name: true, code: true } }),
+      countsByDepartment('worker'),
+      countsByDepartment('incharge'),
+      prisma.user.count({ where: { role: 'worker', isActive: true } }),
+      prisma.user.count({ where: { role: 'incharge', isActive: true } }),
+      // Matches the previous truthiness check on pushToken (a stored empty
+      // string counted as "not notified", so it's excluded here too).
+      prisma.user.count({
+        where: { role: 'worker', isActive: true, pushToken: { not: null }, NOT: { pushToken: '' } },
+      }),
+      prisma.poll.findMany({
+        where: { status: 'open', opensAt: { lte: now }, closesAt: { gt: now } },
+        include: { department: true },
+        orderBy: { closesAt: 'asc' },
+      }),
+      prisma.poll.findMany({
+        where: { status: 'closed' },
+        orderBy: { closesAt: 'desc' },
+        take: 12,
+        include: { department: true },
+      }),
     ]);
 
     const live = await summarizeLivePolls(openPolls);
@@ -156,20 +245,20 @@ exports.getDashboard = async (req, res, next) => {
     const notComing = live.reduce((n, p) => n + (p.summary?.notComing || 0), 0);
     const pending = live.reduce((n, p) => n + (p.summary?.pending || 0), 0);
 
-    const byDepartment = departments.map((dept) => departmentStats(dept, workers, incharges, live));
+    const byDepartment = departments.map((dept) => departmentStats(dept, workerCounts, inchargeCounts, live));
 
     res.json({
       success: true,
       data: {
         stats: {
           departments: departments.length,
-          workers: workers.length,
-          incharges: incharges.length,
+          workers: workerTotal,
+          incharges: inchargeTotal,
           livePolls: live.length,
           coming,
           notComing,
           pending,
-          notified: workers.filter((w) => w.pushToken).length,
+          notified,
         },
         byDepartment,
         livePolls: live,
@@ -184,31 +273,64 @@ exports.getDashboard = async (req, res, next) => {
 exports.getPolls = async (req, res, next) => {
   try {
     await autoCloseExpiredPolls();
-    const { status, department, q } = req.query;
-    const filter = {};
-    if (status === 'open' || status === 'closed') filter.status = status;
-    if (department) filter.department = department;
+    const { status, department, q, shiftStart, shiftEnd, date, summary } = req.query;
+
+    // Filters that define which polls exist for the current view. Shift/date
+    // are applied on top of this for the rows, but the shift dropdown is
+    // built from `baseWhere` so its options don't shrink to whatever the
+    // current page happens to contain.
+    const baseWhere = {};
+    if (status === 'open' || status === 'closed') baseWhere.status = status;
+    if (department) baseWhere.departmentId = department;
     if (q?.trim()) {
-      filter.$or = [
-        { title: { $regex: q.trim(), $options: 'i' } },
-        { shift: { $regex: q.trim(), $options: 'i' } },
+      baseWhere.OR = [
+        { title: { contains: q.trim(), mode: 'insensitive' } },
+        { shift: { contains: q.trim(), mode: 'insensitive' } },
       ];
     }
 
-    const polls = await Poll.find(filter)
-      .sort({ createdAt: -1 })
-      .limit(120)
-      .populate('department', 'name code')
-      .populate('createdBy', 'name employeeId');
-
-    const data = [];
-    for (const poll of polls) {
-      if (!poll.department) continue;
-      const summary = await getPollSummary(poll, poll.department._id || poll.department);
-      data.push({ ...formatPoll(poll), summary });
+    const where = { ...baseWhere };
+    if (shiftStart && shiftEnd) {
+      where.shiftStart = shiftStart;
+      where.shiftEnd = shiftEnd;
     }
+    if (date) where.date = new Date(`${date}T00:00:00.000Z`);
 
-    res.json({ success: true, data });
+    const pagination = parsePagination(req.query, { defaultLimit: 120 });
+
+    const [total, polls, shiftGroups] = await Promise.all([
+      prisma.poll.count({ where }),
+      prisma.poll.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: pagination.skip,
+        take: pagination.take,
+        include: pollInclude,
+      }),
+      prisma.poll.groupBy({
+        by: ['shiftStart', 'shiftEnd'],
+        where: baseWhere,
+        orderBy: [{ shiftStart: 'asc' }, { shiftEnd: 'asc' }],
+      }),
+    ]);
+
+    const withDept = polls.filter((poll) => poll.department);
+    // `summary=counts` skips building per-poll rosters entirely. Full
+    // summaries stay the default so existing clients see no change.
+    const summaries =
+      summary === 'counts' ? await summarizePollCounts(withDept) : await summarizePolls(withDept);
+    const data = withDept.map((poll) => ({ ...formatPoll(poll), summary: summaries.get(poll.id) }));
+
+    res.json({
+      success: true,
+      data,
+      meta: {
+        ...buildMeta(pagination, total),
+        shifts: shiftGroups
+          .filter((group) => group.shiftStart && group.shiftEnd)
+          .map((group) => ({ shiftStart: group.shiftStart, shiftEnd: group.shiftEnd })),
+      },
+    });
   } catch (error) {
     next(error);
   }
@@ -218,7 +340,7 @@ exports.getPollDetail = async (req, res, next) => {
   try {
     const poll = await loadPollOr404(req.params.pollId, res);
     if (!poll) return;
-    const summary = await getPollSummary(poll, poll.department._id || poll.department);
+    const summary = await getPollSummary(poll, poll.departmentId);
     res.json({ success: true, data: { poll: formatPoll(poll), summary } });
   } catch (error) {
     next(error);
@@ -235,18 +357,26 @@ exports.markAttendance = async (req, res, next) => {
     const poll = await loadPollOr404(req.params.pollId, res);
     if (!poll) return;
 
-    const worker = await User.findOne({ _id: workerId, role: 'worker', isActive: true });
+    // Scoped to the poll's own department — without this, a workerId from a
+    // different department would still pass (worker exists, is active) and
+    // record a response against a poll that was never theirs, corrupting
+    // that poll's attendance count with a worker who was never on its roster.
+    const worker = await prisma.user.findFirst({
+      where: { id: workerId, role: 'worker', isActive: true, departmentId: poll.departmentId },
+    });
     if (!worker) {
       return res.status(404).json({ success: false, message: 'Worker not found' });
     }
 
-    await Response.findOneAndUpdate(
-      { poll: poll._id, user: worker._id },
-      { answer, answeredAt: new Date() },
-      { upsert: true, new: true, runValidators: true }
-    );
+    await prisma.response.upsert({
+      where: { pollId_userId: { pollId: poll.id, userId: worker.id } },
+      create: { pollId: poll.id, userId: worker.id, answer, answeredAt: new Date() },
+      update: { answer, answeredAt: new Date() },
+    });
 
-    const summary = await getPollSummary(poll, poll.department._id || poll.department);
+    emitPollUpdate({ pollId: poll.id, departmentId: poll.departmentId, workerId: worker.id, type: 'response' });
+
+    const summary = await getPollSummary(poll, poll.departmentId);
     res.json({
       success: true,
       message: `Marked ${worker.name} as ${answer === 'yes' ? 'coming' : 'not coming'}`,
@@ -259,19 +389,58 @@ exports.markAttendance = async (req, res, next) => {
 
 exports.getWorkforce = async (req, res, next) => {
   try {
-    const filter = { role: { $in: ['worker', 'incharge'] } };
-    if (req.query.active === 'false') filter.isActive = false;
-    else if (req.query.active !== 'all') filter.isActive = true;
+    const { role, department, q } = req.query;
 
-    const workers = await User.find(filter)
-      .select('name employeeId email phone role department incharge equipment process shiftStart shiftEnd shiftName pushToken isActive')
-      .populate('department', 'name code')
-      .populate('incharge', 'name employeeId shiftStart shiftEnd shiftName')
-      .sort({ role: 1, name: 1 });
+    const where = { role: { in: ['worker', 'incharge'] } };
+    if (req.query.active === 'false') where.isActive = false;
+    else if (req.query.active !== 'all') where.isActive = true;
+    if (role === 'worker' || role === 'incharge') where.role = role;
+    if (department) where.departmentId = department;
+    if (q?.trim()) {
+      where.OR = [
+        { name: { contains: q.trim(), mode: 'insensitive' } },
+        { employeeId: { contains: q.trim(), mode: 'insensitive' } },
+      ];
+    }
+
+    // Previously unbounded, and it stays that way unless a client asks for
+    // a page — so nothing that already calls this endpoint changes.
+    const pagination = parsePagination(req.query);
+
+    const [total, people] = await Promise.all([
+      prisma.user.count({ where }),
+      prisma.user.findMany({
+        where,
+        select: personSelect,
+        // id breaks ties so offset paging is stable — two workers sharing a
+        // name would otherwise be free to swap between pages.
+        orderBy: [{ role: 'asc' }, { name: 'asc' }, { id: 'asc' }],
+        skip: pagination.skip,
+        take: pagination.take,
+      }),
+    ]);
+
+    // Direct-report counts for the incharges on this page, as one grouped
+    // query. Without this a caller can only get the number by holding the
+    // entire workforce in memory and cross-referencing it.
+    const inchargeIds = people.filter((p) => p.role === 'incharge').map((p) => p.id);
+    const reportGroups = inchargeIds.length
+      ? await prisma.user.groupBy({
+          by: ['inchargeId'],
+          where: { inchargeId: { in: inchargeIds }, role: 'worker', isActive: true },
+          _count: { _all: true },
+        })
+      : [];
+    const reportCounts = new Map(reportGroups.map((g) => [g.inchargeId, g._count._all]));
 
     res.json({
       success: true,
-      data: workers.map(formatWorker),
+      data: people.map((person) => {
+        const formatted = formatWorker(person);
+        if (person.role !== 'incharge') return formatted;
+        return { ...formatted, reportCount: reportCounts.get(person.id) || 0 };
+      }),
+      meta: buildMeta(pagination, total),
     });
   } catch (error) {
     next(error);
@@ -282,13 +451,11 @@ exports.getLiveBoard = async (req, res, next) => {
   try {
     await autoCloseExpiredPolls();
     const now = new Date();
-    const openPolls = await Poll.find({
-      status: 'open',
-      opensAt: { $lte: now },
-      closesAt: { $gt: now },
-    })
-      .populate('department', 'name code')
-      .sort({ closesAt: 1 });
+    const openPolls = await prisma.poll.findMany({
+      where: { status: 'open', opensAt: { lte: now }, closesAt: { gt: now } },
+      include: { department: true },
+      orderBy: { closesAt: 'asc' },
+    });
 
     const data = await summarizeLivePolls(openPolls);
 
@@ -313,12 +480,7 @@ exports.getLiveBoard = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: {
-        polls: data,
-        coming,
-        notComing,
-        pending,
-      },
+      data: { polls: data, coming, notComing, pending },
     });
   } catch (error) {
     next(error);
@@ -329,16 +491,22 @@ exports.getDepartments = async (req, res, next) => {
   try {
     await autoCloseExpiredPolls();
     const now = new Date();
-    const [departments, workers, incharges, openPolls] = await Promise.all([
-      Department.find().select('name code isActive').sort({ name: 1 }),
-      User.find({ role: 'worker', isActive: true }).select('department'),
-      User.find({ role: 'incharge', isActive: true }).select('department'),
-      Poll.find({ status: 'open', opensAt: { $lte: now }, closesAt: { $gt: now } }).populate('department', 'name code'),
+    const [departments, workerCounts, inchargeCounts, openPolls] = await Promise.all([
+      prisma.department.findMany({
+        select: { id: true, name: true, code: true, isActive: true },
+        orderBy: { name: 'asc' },
+      }),
+      countsByDepartment('worker'),
+      countsByDepartment('incharge'),
+      prisma.poll.findMany({
+        where: { status: 'open', opensAt: { lte: now }, closesAt: { gt: now } },
+        include: { department: true },
+      }),
     ]);
     const live = await summarizeLivePolls(openPolls);
     res.json({
       success: true,
-      data: departments.map((dept) => departmentStats(dept, workers, incharges, live)),
+      data: departments.map((dept) => departmentStats(dept, workerCounts, inchargeCounts, live)),
     });
   } catch (error) {
     next(error);
@@ -349,35 +517,33 @@ exports.getDepartment = async (req, res, next) => {
   try {
     await autoCloseExpiredPolls();
     const now = new Date();
-    const department = await Department.findById(req.params.id).select('name code isActive');
+    const department = await prisma.department.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, name: true, code: true, isActive: true },
+    });
     if (!department) {
       return res.status(404).json({ success: false, message: 'Department not found' });
     }
 
-    const [workers, incharges, openPolls, people] = await Promise.all([
-      User.find({ role: 'worker', isActive: true }).select('department'),
-      User.find({ role: 'incharge', isActive: true }).select('department name employeeId phone'),
-      Poll.find({
-        department: department._id,
-        status: 'open',
-        opensAt: { $lte: now },
-        closesAt: { $gt: now },
-      }).populate('department', 'name code'),
-      User.find({
-        department: department._id,
-        role: { $in: ['worker', 'incharge'] },
-        isActive: true,
-      })
-        .select('name employeeId phone role department shiftStart shiftEnd pushToken isActive')
-        .populate('department', 'name code')
-        .sort({ role: 1, name: 1 }),
+    const [workerCounts, inchargeCounts, openPolls, people] = await Promise.all([
+      countsByDepartment('worker'),
+      countsByDepartment('incharge'),
+      prisma.poll.findMany({
+        where: { departmentId: department.id, status: 'open', opensAt: { lte: now }, closesAt: { gt: now } },
+        include: { department: true },
+      }),
+      prisma.user.findMany({
+        where: { departmentId: department.id, role: { in: ['worker', 'incharge'] }, isActive: true },
+        select: personSelect,
+        orderBy: [{ role: 'asc' }, { name: 'asc' }],
+      }),
     ]);
 
     const livePolls = await summarizeLivePolls(openPolls);
     res.json({
       success: true,
       data: {
-        department: departmentStats(department, workers, incharges, livePolls),
+        department: departmentStats(department, workerCounts, inchargeCounts, livePolls),
         incharges: people.filter((p) => p.role === 'incharge').map(formatWorker),
         employees: people.filter((p) => p.role === 'worker').map(formatWorker),
         livePolls,
@@ -388,13 +554,430 @@ exports.getDepartment = async (req, res, next) => {
   }
 };
 
+exports.createDepartment = async (req, res, next) => {
+  try {
+    const { name, code } = req.body;
+    if (!name?.trim() || !code?.trim()) {
+      return res.status(400).json({ success: false, message: 'Name and code are required' });
+    }
+
+    const normalizedCode = code.trim().toUpperCase();
+    const existing = await prisma.department.findUnique({ where: { code: normalizedCode } });
+    if (existing) {
+      return res.status(400).json({ success: false, message: 'A plant with this code already exists' });
+    }
+
+    const dept = await prisma.department.create({ data: { name: name.trim(), code: normalizedCode } });
+    res.status(201).json({ success: true, message: 'Plant created', data: formatDept(dept) });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.updateDepartment = async (req, res, next) => {
+  try {
+    const dept = await prisma.department.findUnique({ where: { id: req.params.id } });
+    if (!dept) {
+      return res.status(404).json({ success: false, message: 'Plant not found' });
+    }
+
+    const { name, code, isActive } = req.body;
+    const data = {};
+
+    if (name !== undefined) {
+      if (!name?.trim()) {
+        return res.status(400).json({ success: false, message: 'Name cannot be empty' });
+      }
+      data.name = name.trim();
+    }
+
+    if (code !== undefined) {
+      if (!code?.trim()) {
+        return res.status(400).json({ success: false, message: 'Code cannot be empty' });
+      }
+      const normalizedCode = code.trim().toUpperCase();
+      if (normalizedCode !== dept.code) {
+        const existing = await prisma.department.findUnique({ where: { code: normalizedCode } });
+        if (existing) {
+          return res.status(400).json({ success: false, message: 'A plant with this code already exists' });
+        }
+      }
+      data.code = normalizedCode;
+    }
+
+    if (isActive !== undefined) {
+      data.isActive = !!isActive;
+    }
+
+    const updated = await prisma.department.update({ where: { id: dept.id }, data });
+    res.json({ success: true, message: 'Plant updated', data: formatDept(updated) });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.deactivateDepartment = async (req, res, next) => {
+  try {
+    const dept = await prisma.department.findUnique({ where: { id: req.params.id } });
+    if (!dept) {
+      return res.status(404).json({ success: false, message: 'Plant not found' });
+    }
+
+    const activePeople = await prisma.user.count({
+      where: { departmentId: dept.id, isActive: true, role: { in: ['worker', 'incharge'] } },
+    });
+    if (activePeople > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot deactivate — ${activePeople} active worker(s)/incharge(s) are still assigned to this plant. Reassign or deactivate them first.`,
+      });
+    }
+
+    await prisma.department.update({ where: { id: dept.id }, data: { isActive: false } });
+    res.json({ success: true, message: 'Plant deactivated' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.createTeamMember = async (req, res, next) => {
+  try {
+    const {
+      employeeId,
+      name,
+      phone,
+      email,
+      password,
+      role,
+      department,
+      shiftName,
+      equipment,
+      process: processField,
+      incharge,
+    } = req.body;
+
+    if (!employeeId?.trim() || !name?.trim() || !password || !role || !department) {
+      return res.status(400).json({
+        success: false,
+        message: 'Employee ID, name, password, role and plant are required',
+      });
+    }
+    if (!['worker', 'incharge'].includes(role)) {
+      return res.status(400).json({ success: false, message: 'Role must be worker or incharge' });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 6 characters' });
+    }
+
+    const dept = await prisma.department.findUnique({ where: { id: department } });
+    if (!dept) {
+      return res.status(400).json({ success: false, message: 'Plant not found' });
+    }
+
+    const shift = parseShiftTimes(req.body, DEFAULT_SHIFT_START, DEFAULT_SHIFT_END);
+    if (shift.error) {
+      return res.status(400).json({ success: false, message: shift.error });
+    }
+
+    const normalizedId = employeeId.trim().toUpperCase();
+    const existingId = await prisma.user.findUnique({ where: { employeeId: normalizedId } });
+    if (existingId) {
+      return res.status(400).json({ success: false, message: 'Employee ID already exists' });
+    }
+
+    let inchargeId = null;
+    if (role === 'worker' && incharge) {
+      const inchargeDoc = await prisma.user.findFirst({
+        where: { id: incharge, role: 'incharge', departmentId: dept.id, isActive: true },
+      });
+      if (!inchargeDoc) {
+        return res.status(400).json({ success: false, message: 'Incharge not found in this plant' });
+      }
+      inchargeId = inchargeDoc.id;
+    }
+
+    const member = await prisma.user.create({
+      data: {
+        employeeId: normalizedId,
+        name: name.trim(),
+        email: email?.trim() || null,
+        phone: phone?.trim() || '',
+        password: await hashPassword(password),
+        role,
+        departmentId: dept.id,
+        inchargeId,
+        equipment: role === 'worker' ? equipment?.trim() || '' : '',
+        process: role === 'worker' ? processField?.trim() || '' : '',
+        shiftStart: shift.shiftStart,
+        shiftEnd: shift.shiftEnd,
+        shiftName: shiftName?.trim() || '',
+      },
+    });
+
+    const populated = await prisma.user.findUnique({
+      where: { id: member.id },
+      select: personSelect,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: `${role === 'worker' ? 'Worker' : 'Incharge'} created`,
+      data: formatWorker(populated),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.updateTeamMember = async (req, res, next) => {
+  try {
+    const member = await prisma.user.findFirst({ where: { id: req.params.id, role: { in: ['worker', 'incharge'] } } });
+    if (!member) {
+      return res.status(404).json({ success: false, message: 'Employee not found' });
+    }
+
+    const { name, phone, email, password, department, shiftName, equipment, process: processField, incharge, isActive } =
+      req.body;
+    const data = {};
+
+    if (name !== undefined) {
+      if (!name?.trim()) {
+        return res.status(400).json({ success: false, message: 'Name cannot be empty' });
+      }
+      data.name = name.trim();
+    }
+
+    if (phone !== undefined) data.phone = phone?.trim() || '';
+    if (email !== undefined) data.email = email?.trim() || null;
+
+    let effectiveDepartmentId = member.departmentId;
+    if (department !== undefined) {
+      const dept = await prisma.department.findUnique({ where: { id: department } });
+      if (!dept) {
+        return res.status(400).json({ success: false, message: 'Plant not found' });
+      }
+      data.departmentId = dept.id;
+      effectiveDepartmentId = dept.id;
+    }
+
+    if (req.body.shiftStart !== undefined || req.body.shiftEnd !== undefined) {
+      const shift = parseShiftTimes(
+        req.body,
+        member.shiftStart || DEFAULT_SHIFT_START,
+        member.shiftEnd || DEFAULT_SHIFT_END
+      );
+      if (shift.error) {
+        return res.status(400).json({ success: false, message: shift.error });
+      }
+      data.shiftStart = shift.shiftStart;
+      data.shiftEnd = shift.shiftEnd;
+    }
+    if (shiftName !== undefined) data.shiftName = shiftName?.trim() || '';
+
+    if (member.role === 'worker') {
+      if (equipment !== undefined) data.equipment = equipment?.trim() || '';
+      if (processField !== undefined) data.process = processField?.trim() || '';
+      if (incharge !== undefined) {
+        if (incharge) {
+          const inchargeDoc = await prisma.user.findFirst({
+            where: { id: incharge, role: 'incharge', departmentId: effectiveDepartmentId, isActive: true },
+          });
+          if (!inchargeDoc) {
+            return res.status(400).json({ success: false, message: 'Incharge not found in this plant' });
+          }
+          data.inchargeId = inchargeDoc.id;
+        } else {
+          data.inchargeId = null;
+        }
+      }
+    }
+
+    if (isActive !== undefined) {
+      data.isActive = !!isActive;
+      if (!data.isActive) data.pushToken = null;
+    }
+
+    if (password) {
+      if (password.length < 6) {
+        return res.status(400).json({ success: false, message: 'Password must be at least 6 characters' });
+      }
+      data.password = await hashPassword(password);
+    }
+
+    await prisma.user.update({ where: { id: member.id }, data });
+    const populated = await prisma.user.findUnique({
+      where: { id: member.id },
+      select: personSelect,
+    });
+
+    res.json({ success: true, message: 'Updated', data: formatWorker(populated) });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.deactivateTeamMember = async (req, res, next) => {
+  try {
+    const member = await prisma.user.findFirst({ where: { id: req.params.id, role: { in: ['worker', 'incharge'] } } });
+    if (!member) {
+      return res.status(404).json({ success: false, message: 'Employee not found' });
+    }
+
+    if (member.role === 'incharge') {
+      const directReportCount = await prisma.user.count({
+        where: { inchargeId: member.id, role: 'worker', isActive: true },
+      });
+      if (directReportCount > 0) {
+        return res.status(400).json({
+          success: false,
+          message: `Cannot deactivate — ${directReportCount} worker(s) still report to this incharge. Reassign them first.`,
+        });
+      }
+    }
+
+    await prisma.user.update({ where: { id: member.id }, data: { isActive: false, pushToken: null } });
+
+    res.json({ success: true, message: `${member.role === 'worker' ? 'Worker' : 'Incharge'} deactivated` });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.getHrAdmins = async (req, res, next) => {
+  try {
+    const admins = await prisma.user.findMany({
+      where: { role: { in: HR_ROLES } },
+      select: hrUserSelect,
+      orderBy: { name: 'asc' },
+    });
+    res.json({ success: true, data: admins.map(formatHrUser) });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.createHrAdmin = async (req, res, next) => {
+  try {
+    const { employeeId, name, email, phone, password, role } = req.body;
+
+    if (!employeeId?.trim() || !name?.trim() || !email?.trim() || !password || !role) {
+      return res.status(400).json({
+        success: false,
+        message: 'Employee ID, name, email, password and role are required',
+      });
+    }
+    if (!HR_ROLES.includes(role)) {
+      return res.status(400).json({ success: false, message: 'Role must be hr, admin or superadmin' });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 6 characters' });
+    }
+
+    const normalizedId = employeeId.trim().toUpperCase();
+    const normalizedEmail = email.trim().toLowerCase();
+    const existing = await prisma.user.findFirst({
+      where: { OR: [{ employeeId: normalizedId }, { email: normalizedEmail }] },
+    });
+    if (existing) {
+      return res.status(400).json({ success: false, message: 'Employee ID or email is already in use' });
+    }
+
+    const admin = await prisma.user.create({
+      data: {
+        employeeId: normalizedId,
+        name: name.trim(),
+        email: normalizedEmail,
+        phone: phone?.trim() || '',
+        password: await hashPassword(password),
+        role,
+      },
+    });
+
+    res.status(201).json({ success: true, message: 'HR login created', data: formatHrUser(admin) });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.updateHrAdmin = async (req, res, next) => {
+  try {
+    const admin = await prisma.user.findFirst({ where: { id: req.params.id, role: { in: HR_ROLES } } });
+    if (!admin) {
+      return res.status(404).json({ success: false, message: 'HR login not found' });
+    }
+
+    const { name, phone, isActive } = req.body;
+    const data = {};
+
+    if (name !== undefined) {
+      if (!name?.trim()) {
+        return res.status(400).json({ success: false, message: 'Name cannot be empty' });
+      }
+      data.name = name.trim();
+    }
+    if (phone !== undefined) data.phone = phone?.trim() || '';
+
+    if (isActive !== undefined) {
+      if (!isActive && admin.id === req.user.id) {
+        return res.status(400).json({ success: false, message: 'You cannot deactivate your own login' });
+      }
+      if (!isActive) {
+        const otherActiveAdmins = await prisma.user.count({
+          where: { id: { not: admin.id }, role: { in: HR_ROLES }, isActive: true },
+        });
+        if (otherActiveAdmins === 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'Cannot deactivate the last remaining HR/admin login',
+          });
+        }
+      }
+      data.isActive = !!isActive;
+    }
+
+    const updated = await prisma.user.update({ where: { id: admin.id }, data });
+    res.json({ success: true, message: 'HR login updated', data: formatHrUser(updated) });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.deactivateHrAdmin = async (req, res, next) => {
+  try {
+    const admin = await prisma.user.findFirst({ where: { id: req.params.id, role: { in: HR_ROLES } } });
+    if (!admin) {
+      return res.status(404).json({ success: false, message: 'HR login not found' });
+    }
+
+    if (admin.id === req.user.id) {
+      return res.status(400).json({ success: false, message: 'You cannot deactivate your own login' });
+    }
+
+    const otherActiveAdmins = await prisma.user.count({
+      where: { id: { not: admin.id }, role: { in: HR_ROLES }, isActive: true },
+    });
+    if (otherActiveAdmins === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot deactivate the last remaining HR/admin login',
+      });
+    }
+
+    await prisma.user.update({ where: { id: admin.id }, data: { isActive: false } });
+
+    res.json({ success: true, message: 'HR login deactivated' });
+  } catch (error) {
+    next(error);
+  }
+};
+
 exports.exportPollExcel = async (req, res, next) => {
   try {
     const poll = await loadPollOr404(req.params.pollId, res);
     if (!poll) return;
-    const summary = await getPollSummary(poll, poll.department._id || poll.department);
+    const summary = await getPollSummary(poll, poll.departmentId);
     const buffer = await buildPollExcelBuffer(poll, summary);
-    const filename = `FlexiTrack_HR_${(poll.department?.code || 'DEPT')}_${String(poll._id).slice(-6)}.xlsx`;
+    const filename = `FlexiTrack_HR_${(poll.department?.code || 'DEPT')}_${String(poll.id).slice(-6)}.xlsx`;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(Buffer.from(buffer));
@@ -407,9 +990,9 @@ exports.exportPollPdf = async (req, res, next) => {
   try {
     const poll = await loadPollOr404(req.params.pollId, res);
     if (!poll) return;
-    const summary = await getPollSummary(poll, poll.department._id || poll.department);
+    const summary = await getPollSummary(poll, poll.departmentId);
     const buffer = await buildPollPdfBuffer(poll, summary);
-    const filename = `FlexiTrack_HR_${(poll.department?.code || 'DEPT')}_${String(poll._id).slice(-6)}.pdf`;
+    const filename = `FlexiTrack_HR_${(poll.department?.code || 'DEPT')}_${String(poll.id).slice(-6)}.pdf`;
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(buffer);
@@ -421,16 +1004,21 @@ exports.exportPollPdf = async (req, res, next) => {
 exports.exportManpowerExcel = async (req, res, next) => {
   try {
     const { status } = req.query;
-    const filter = {};
-    if (status === 'open' || status === 'closed') filter.status = status;
-    else filter.status = 'closed';
+    const where = {};
+    if (status === 'open' || status === 'closed') where.status = status;
+    else where.status = 'closed';
 
-    const polls = await Poll.find(filter).sort({ date: -1 }).limit(80).populate('department', 'name code');
-    const rows = [];
-    for (const poll of polls) {
-      if (!poll.department) continue;
-      const summary = await getPollSummary(poll, poll.department._id || poll.department);
-      rows.push({
+    const polls = await prisma.poll.findMany({
+      where,
+      orderBy: { date: 'desc' },
+      take: 80,
+      include: { department: true },
+    });
+    const withDept = polls.filter((poll) => poll.department);
+    const summaries = await summarizePolls(withDept);
+    const rows = withDept.map((poll) => {
+      const summary = summaries.get(poll.id);
+      return {
         date: poll.date,
         department: poll.department?.name || '',
         shift: `${poll.shiftStart || ''}–${poll.shiftEnd || poll.shift}`,
@@ -441,8 +1029,8 @@ exports.exportManpowerExcel = async (req, res, next) => {
         totalWorkers: summary.totalWorkers,
         attendanceRate: summary.attendanceRate,
         title: poll.title,
-      });
-    }
+      };
+    });
     const buffer = await buildRangeExcelBuffer(rows);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', 'attachment; filename="FlexiTrack_HR_Manpower_Plan.xlsx"');
@@ -454,29 +1042,56 @@ exports.exportManpowerExcel = async (req, res, next) => {
 
 exports.getEmployee = async (req, res, next) => {
   try {
-    const worker = await User.findById(req.params.employeeId)
-      .select('name employeeId email phone role department incharge equipment process shiftStart shiftEnd shiftName isActive')
-      .populate('department', 'name code')
-      .populate('incharge', 'name employeeId shiftStart shiftEnd shiftName');
+    const worker = await prisma.user.findUnique({
+      where: { id: req.params.employeeId },
+      select: personSelect,
+    });
 
     if (!worker || !['worker', 'incharge'].includes(worker.role)) {
       return res.status(404).json({ success: false, message: 'Employee not found' });
     }
 
-    const responses = await Response.find({ user: worker._id })
-      .sort({ answeredAt: -1 })
-      .limit(40)
-      .populate({
-        path: 'poll',
-        select: 'title date shift shiftStart shiftEnd status department',
-        populate: { path: 'department', select: 'name code' },
-      });
+    const historyPagination = parsePagination(req.query, { defaultLimit: 40 });
+    const [historyTotal, responses] = await Promise.all([
+      prisma.response.count({ where: { userId: worker.id } }),
+      prisma.response.findMany({
+        where: { userId: worker.id },
+        orderBy: [{ answeredAt: 'desc' }, { id: 'desc' }],
+        skip: historyPagination.skip,
+        take: historyPagination.take,
+        include: {
+          poll: {
+            select: {
+              id: true,
+              title: true,
+              date: true,
+              shift: true,
+              shiftStart: true,
+              shiftEnd: true,
+              status: true,
+              department: { select: departmentSelect },
+            },
+          },
+        },
+      }),
+    ]);
 
     let directReports = null;
     if (worker.role === 'incharge') {
-      const reports = await User.find({ incharge: worker._id, role: 'worker', isActive: true })
-        .select('name employeeId phone equipment process shiftStart shiftEnd')
-        .sort({ name: 1 });
+      const reports = await prisma.user.findMany({
+        where: { inchargeId: worker.id, role: 'worker', isActive: true },
+        select: {
+          id: true,
+          name: true,
+          employeeId: true,
+          phone: true,
+          equipment: true,
+          process: true,
+          shiftStart: true,
+          shiftEnd: true,
+        },
+        orderBy: { name: 'asc' },
+      });
       directReports = reports.map(formatWorker);
     }
 
@@ -486,12 +1101,13 @@ exports.getEmployee = async (req, res, next) => {
         employee: formatWorker(worker),
         directReports,
         history: responses.map((r) => ({
-          id: String(r._id),
+          id: r.id,
           answer: r.answer,
           answeredAt: r.answeredAt,
           poll: r.poll ? formatPoll(r.poll) : null,
         })),
       },
+      meta: buildMeta(historyPagination, historyTotal),
     });
   } catch (error) {
     next(error);
@@ -502,25 +1118,19 @@ exports.getFollowUps = async (req, res, next) => {
   try {
     await autoCloseExpiredPolls();
     const now = new Date();
-    const openPolls = await Poll.find({
-      status: 'open',
-      opensAt: { $lte: now },
-      closesAt: { $gt: now },
-    }).populate('department', 'name code');
-
-    const live = await Promise.all(
-      openPolls
-        .filter((poll) => poll.department)
-        .map(async (poll) => {
-          const summary = await getPollSummary(poll, poll.department._id || poll.department);
-          return { poll: formatPoll(poll), summary };
-        })
-    );
-
-    const records = await FollowUp.find({
-      poll: { $in: openPolls.map((p) => p._id) },
+    const openPolls = await prisma.poll.findMany({
+      where: { status: 'open', opensAt: { lte: now }, closesAt: { gt: now } },
+      include: { department: true },
     });
-    const recordMap = new Map(records.map((r) => [`${r.worker}:${r.poll}`, r]));
+
+    const withDept = openPolls.filter((poll) => poll.department);
+    const followUpSummaries = await summarizePolls(withDept);
+    const live = withDept.map((poll) => ({ poll: formatPoll(poll), summary: followUpSummaries.get(poll.id) }));
+
+    const records = await prisma.followUp.findMany({
+      where: { pollId: { in: openPolls.map((p) => p.id) } },
+    });
+    const recordMap = new Map(records.map((r) => [`${r.workerId}:${r.pollId}`, r]));
 
     const items = [];
     live.forEach(({ poll, summary }) => {
@@ -561,19 +1171,42 @@ exports.updateFollowUp = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'workerId, pollId and a valid status are required' });
     }
 
-    const record = await FollowUp.findOneAndUpdate(
-      { worker: workerId, poll: pollId },
-      { status, note: note || '', updatedBy: req.user._id },
-      { upsert: true, new: true, runValidators: true }
-    );
+    // Verified up front (not just relied on the DB's foreign keys to reject
+    // a bad id) so a mismatched pair — a real worker and a real poll, just
+    // not each other's — can't silently record a Response for a worker who
+    // was never on that poll's roster, corrupting its attendance count.
+    const poll = await prisma.poll.findUnique({ where: { id: pollId }, select: { departmentId: true } });
+    if (!poll) {
+      return res.status(404).json({ success: false, message: 'Poll not found' });
+    }
+    const worker = await prisma.user.findFirst({
+      where: { id: workerId, role: 'worker', isActive: true, departmentId: poll.departmentId },
+    });
+    if (!worker) {
+      return res.status(404).json({ success: false, message: 'Worker not found in this poll\'s department' });
+    }
+
+    const record = await prisma.followUp.upsert({
+      where: { workerId_pollId: { workerId, pollId } },
+      create: { workerId, pollId, status, note: note || '', updatedById: req.user.id },
+      update: { status, note: note || '', updatedById: req.user.id },
+    });
 
     if (status === 'confirmed_coming' || status === 'confirmed_not_coming') {
-      await Response.findOneAndUpdate(
-        { poll: pollId, user: workerId },
-        { answer: status === 'confirmed_coming' ? 'yes' : 'no', answeredAt: new Date() },
-        { upsert: true, new: true, runValidators: true }
-      );
+      await prisma.response.upsert({
+        where: { pollId_userId: { pollId, userId: workerId } },
+        create: {
+          pollId,
+          userId: workerId,
+          answer: status === 'confirmed_coming' ? 'yes' : 'no',
+          answeredAt: new Date(),
+        },
+        update: { answer: status === 'confirmed_coming' ? 'yes' : 'no', answeredAt: new Date() },
+      });
+      emitPollUpdate({ pollId, departmentId: poll.departmentId, workerId, type: 'response' });
     }
+
+    emitFollowUpUpdate({ pollId, workerId });
 
     res.json({ success: true, message: 'Follow-up updated', data: record });
   } catch (error) {
@@ -591,14 +1224,13 @@ exports.changePassword = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'New password must be at least 6 characters' });
     }
 
-    const user = await User.findById(req.user._id).select('+password');
-    const ok = await user.comparePassword(currentPassword);
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+    const ok = await comparePassword(currentPassword, user.password);
     if (!ok) {
       return res.status(400).json({ success: false, message: 'Current password is incorrect' });
     }
 
-    user.password = newPassword;
-    await user.save();
+    await prisma.user.update({ where: { id: user.id }, data: { password: await hashPassword(newPassword) } });
     res.json({ success: true, message: 'Password updated' });
   } catch (error) {
     next(error);

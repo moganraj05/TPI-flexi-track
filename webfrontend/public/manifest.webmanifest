@@ -1,0 +1,24 @@
+{
+  "name": "FlexiTrack Ops Console",
+  "short_name": "FlexiTrack",
+  "description": "Flexi-worker attendance, tracked live.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0f1c22",
+  "theme_color": "#0f1c22",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

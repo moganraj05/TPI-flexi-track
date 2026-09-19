@@ -6,9 +6,18 @@ export const getToken = () => localStorage.getItem(TOKEN_KEY);
 export const setToken = (token) => localStorage.setItem(TOKEN_KEY, token);
 export const clearToken = () => localStorage.removeItem(TOKEN_KEY);
 
-const baseURL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+// Default to whatever host the browser used to load this page — so opening
+// the app via the laptop's LAN IP (e.g. from a phone) automatically talks to
+// the backend on that same IP, instead of a hardcoded "localhost" that only
+// ever means the device the browser itself is running on. VITE_API_URL can
+// still override this for unusual setups (backend on a different host).
+const baseURL = import.meta.env.VITE_API_URL || `http://${window.location.hostname}:5000/api`;
 
 export const client = axios.create({ baseURL });
+
+// Socket.IO connects to the server root, not the /api prefix — strip it off
+// whichever baseURL was resolved above so both stay in sync automatically.
+export const socketURL = baseURL.replace(/\/api\/?$/, '');
 
 client.interceptors.request.use((config) => {
   const token = getToken();

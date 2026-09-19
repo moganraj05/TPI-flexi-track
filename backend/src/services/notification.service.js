@@ -1,4 +1,5 @@
-const User = require('../models/User');
+const prisma = require('../config/prisma');
+const logger = require('../utils/logger');
 
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 
@@ -49,7 +50,8 @@ const sendPushNotifications = async (tokens, { title, body, data = {} }) => {
       failed += chunk.length;
       const message = result?.errors?.[0]?.message || 'Expo push API returned no tickets';
       errors.push(message);
-      console.error('[push] API error:', JSON.stringify(result));
+      // Never the token itself — chunkSize is enough to see the blast radius.
+      logger.error('push.api_error', { error: message, chunkSize: chunk.length });
       continue;
     }
 
@@ -64,12 +66,14 @@ const sendPushNotifications = async (tokens, { title, body, data = {} }) => {
 
       failed += 1;
       const message = ticket?.message || ticket?.code || 'Unknown push error';
-      errors.push(message);
-      console.error('[push] Delivery failed:', message, token);
-
       const errorCode = ticket?.details?.error || ticket?.code;
+      errors.push(message);
+      // Logged by error code, not the token — a token is per-device-install,
+      // not meaningfully actionable in a log even redacted.
+      logger.warn('push.delivery_failed', { errorCode, error: message });
+
       if (errorCode === 'DeviceNotRegistered' && token) {
-        await User.updateMany({ pushToken: token }, { $unset: { pushToken: 1 } });
+        await prisma.user.updateMany({ where: { pushToken: token }, data: { pushToken: null } });
       }
     }
   }
@@ -79,31 +83,24 @@ const sendPushNotifications = async (tokens, { title, body, data = {} }) => {
 
 const notifyDepartmentWorkers = async (departmentId, notification) => {
   const [allWorkers, registeredWorkers] = await Promise.all([
-    User.find({
-      department: departmentId,
-      role: 'worker',
-      isActive: true,
-    }).select('employeeId name'),
-    User.find({
-      department: departmentId,
-      role: 'worker',
-      isActive: true,
-      pushToken: { $exists: true, $nin: [null, ''] },
-    }).select('pushToken name employeeId'),
+    prisma.user.findMany({
+      where: { departmentId, role: 'worker', isActive: true },
+      select: { employeeId: true, name: true },
+    }),
+    prisma.user.findMany({
+      where: { departmentId, role: 'worker', isActive: true, NOT: [{ pushToken: null }, { pushToken: '' }] },
+      select: { pushToken: true, name: true, employeeId: true },
+    }),
   ]);
 
   const tokens = [...new Set(registeredWorkers.map((w) => w.pushToken).filter(Boolean))];
   const result = await sendPushNotifications(tokens, notification);
 
-  if (registeredWorkers.length === 0) {
-    console.log(
-      `[push] No registered workers in department ${departmentId}. Team size: ${allWorkers.length}`
-    );
-  } else {
-    console.log(
-      `[push] Targeting ${registeredWorkers.length}/${allWorkers.length} workers in department ${departmentId}`
-    );
-  }
+  logger.info('push.department_targeted', {
+    departmentId,
+    targeted: registeredWorkers.length,
+    teamSize: allWorkers.length,
+  });
 
   return {
     ...result,
@@ -115,29 +112,33 @@ const notifyDepartmentWorkers = async (departmentId, notification) => {
 
 const notifyShiftWorkers = async (departmentId, shiftStart, shiftEnd, notification) => {
   const [allWorkers, registeredWorkers] = await Promise.all([
-    User.find({
-      department: departmentId,
-      role: 'worker',
-      isActive: true,
-      shiftStart,
-      shiftEnd,
-    }).select('employeeId name'),
-    User.find({
-      department: departmentId,
-      role: 'worker',
-      isActive: true,
-      shiftStart,
-      shiftEnd,
-      pushToken: { $exists: true, $nin: [null, ''] },
-    }).select('pushToken name employeeId'),
+    prisma.user.findMany({
+      where: { departmentId, role: 'worker', isActive: true, shiftStart, shiftEnd },
+      select: { employeeId: true, name: true },
+    }),
+    prisma.user.findMany({
+      where: {
+        departmentId,
+        role: 'worker',
+        isActive: true,
+        shiftStart,
+        shiftEnd,
+        NOT: [{ pushToken: null }, { pushToken: '' }],
+      },
+      select: { pushToken: true, name: true, employeeId: true },
+    }),
   ]);
 
   const tokens = [...new Set(registeredWorkers.map((w) => w.pushToken).filter(Boolean))];
   const result = await sendPushNotifications(tokens, notification);
 
-  console.log(
-    `[push] Shift ${shiftStart}–${shiftEnd}: targeting ${registeredWorkers.length}/${allWorkers.length} workers`
-  );
+  logger.info('push.shift_targeted', {
+    departmentId,
+    shiftStart,
+    shiftEnd,
+    targeted: registeredWorkers.length,
+    teamSize: allWorkers.length,
+  });
 
   return {
     ...result,

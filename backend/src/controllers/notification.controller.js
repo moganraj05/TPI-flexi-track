@@ -1,3 +1,6 @@
+const prisma = require('../config/prisma');
+const logger = require('../utils/logger');
+
 exports.savePushToken = async (req, res, next) => {
   try {
     const { pushToken } = req.body;
@@ -6,25 +9,22 @@ exports.savePushToken = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Invalid push token format' });
     }
 
-    const User = require('../models/User');
-
     // One device token belongs to one worker account at a time.
-    await User.updateMany(
-      { pushToken, _id: { $ne: req.user._id } },
-      { $unset: { pushToken: 1 } }
-    );
+    await prisma.user.updateMany({
+      where: { pushToken, id: { not: req.user.id } },
+      data: { pushToken: null },
+    });
 
-    const user = await User.findByIdAndUpdate(
-      req.user._id,
-      { pushToken },
-      { new: true }
-    ).select('employeeId name pushToken role');
+    const user = await prisma.user.update({
+      where: { id: req.user.id },
+      data: { pushToken },
+      select: { employeeId: true, pushToken: true, role: true },
+    });
 
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-
-    console.log(`[push] Token saved for ${user.employeeId} (${user.name})`);
+    // employeeId (a badge number, not a name/phone/email) is the only
+    // identifier here — logger.js would redact `pushToken` anyway, but the
+    // token isn't diagnostically useful in a log either way.
+    logger.info('push.token_saved', { userId: req.user.id, employeeId: user.employeeId });
 
     res.json({
       success: true,
@@ -38,14 +38,13 @@ exports.savePushToken = async (req, res, next) => {
 
 exports.clearPushToken = async (req, res, next) => {
   try {
-    const User = require('../models/User');
-    const user = await User.findByIdAndUpdate(
-      req.user._id,
-      { $unset: { pushToken: 1 } },
-      { new: true }
-    ).select('employeeId');
+    const user = await prisma.user.update({
+      where: { id: req.user.id },
+      data: { pushToken: null },
+      select: { employeeId: true },
+    });
 
-    console.log(`[push] Token cleared for ${user?.employeeId}`);
+    logger.info('push.token_cleared', { userId: req.user.id, employeeId: user?.employeeId });
 
     res.json({ success: true, message: 'Push token cleared' });
   } catch (error) {
@@ -55,8 +54,10 @@ exports.clearPushToken = async (req, res, next) => {
 
 exports.getPushStatus = async (req, res, next) => {
   try {
-    const User = require('../models/User');
-    const user = await User.findById(req.user._id).select('pushToken employeeId');
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { pushToken: true, employeeId: true },
+    });
 
     const pushToken = user?.pushToken?.startsWith('ExponentPushToken[') ? user.pushToken : null;
 
