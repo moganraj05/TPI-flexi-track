@@ -2,17 +2,40 @@ import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getDepartments, getWorkforce, createTeamMember, updateTeamMember, deactivateTeamMember } from '../api/hr';
-import { theme, chipStyle, filterBtnStyle, SUCCESS } from '../theme';
+import { theme, chipStyle, SUCCESS } from '../theme';
+import { spacing, radius, elevation } from '../tokens';
 import { CenteredSpinner } from '../components/common/Spinner';
 import { EmptyState } from '../components/common/EmptyState';
-import { plantFilterOptions } from '../components/common/FilterChips';
+import { FilterChips, plantFilterOptions } from '../components/common/FilterChips';
 import { PlantSelect } from '../components/common/PlantSelect';
 import { NameLinkButton } from '../components/common/NameLinkButton';
+import { Avatar } from '../components/common/Avatar';
+import { Badge } from '../components/common/Badge';
+import { Button } from '../components/common/Button';
+import { Table, TableHead, Th, TableRow, Td } from '../components/common/Table';
+import { SkeletonTableRows } from '../components/common/Skeleton';
 import { Pagination } from '../components/common/Pagination';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { useToast } from '../context/ToastContext';
 
 const GROUP_PAGE_SIZE = 8;
+
+// Maps the page's 3-way status filter to the `active` query param
+// getWorkforce already accepts server-side (hr.controller.js) — 'true' is
+// its default (and this page's unchanged default view), so 'active' doesn't
+// need to send anything explicit, but being explicit here costs nothing and
+// keeps the mapping in one obvious place.
+const activeParamFor = (statusFilter) => (statusFilter === 'all' ? 'all' : statusFilter === 'inactive' ? 'false' : 'true');
+
+const VIEW_OPTIONS = [
+  { value: 'workers', label: 'Workers' },
+  { value: 'incharges', label: 'Incharges' },
+];
+const STATUS_OPTIONS = [
+  { value: 'active', label: 'Active' },
+  { value: 'inactive', label: 'Inactive' },
+  { value: 'all', label: 'All' },
+];
 
 export function Workforce() {
   const navigate = useNavigate();
@@ -21,8 +44,12 @@ export function Workforce() {
   const [searchParams] = useSearchParams();
   const [view, setView] = useState('workers');
   const [plantFilter, setPlantFilter] = useState(() => searchParams.get('plant') || 'all');
+  // 'active' is the page's existing default and stays that way — this just
+  // adds a way to look at the other two without changing what loads first.
+  const [statusFilter, setStatusFilter] = useState('active');
   const [formTarget, setFormTarget] = useState(null);
   const [deactivateTarget, setDeactivateTarget] = useState(null);
+  const [reactivateTarget, setReactivateTarget] = useState(null);
 
   // Plant list + head counts change only on explicit plant/team CRUD, all
   // of which already call invalidateQueries(['hr-departments']) — so a long
@@ -38,10 +65,10 @@ export function Workforce() {
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ['hr-workforce'] });
     queryClient.invalidateQueries({ queryKey: ['hr-departments'] });
-    // Team create/update/deactivate doesn't emit a Socket.IO event (only
-    // poll activity does), so without this a worker/incharge detail page
-    // already cached from earlier in the session would keep showing
-    // pre-edit data if opened right after an edit made here.
+    // Team create/update/deactivate/reactivate doesn't emit a Socket.IO
+    // event (only poll activity does), so without this a worker/incharge
+    // detail page already cached from earlier in the session would keep
+    // showing pre-edit data if opened right after a change made here.
     queryClient.invalidateQueries({ queryKey: ['hr-employee'] });
   };
 
@@ -49,38 +76,45 @@ export function Workforce() {
     const member = deactivateTarget;
     const label = member.role === 'worker' ? 'Worker' : 'Incharge';
     await deactivateTeamMember(member.id);
-    toast(`${label} deactivated`);
+    toast(`${label} deactivated`, 'success');
     setDeactivateTarget(null);
+    refresh();
+  };
+
+  const confirmReactivate = async () => {
+    const member = reactivateTarget;
+    const label = member.role === 'worker' ? 'Worker' : 'Incharge';
+    // Same isActive:true capability updateDepartment/updateHrAdmin already
+    // use in Settings.jsx for plants and HR logins — nothing new backend-side.
+    await updateTeamMember(member.id, { isActive: true });
+    toast(`${label} reactivated`, 'success');
+    setReactivateTarget(null);
     refresh();
   };
 
   const relevantDepartments = (departments || []).filter((d) => plantFilter === 'all' || d.id === plantFilter);
   const defaultDeptId = plantFilter !== 'all' ? plantFilter : departments?.[0]?.id;
+  const activeWorkerTotal = (departments || []).reduce((sum, d) => sum + (d.workers || 0), 0);
+  const activeInchargeTotal = (departments || []).reduce((sum, d) => sum + (d.incharges || 0), 0);
 
   return (
-    <>
-      <div style={theme.filterRow}>
-        <button onClick={() => setView('workers')} style={filterBtnStyle(view === 'workers')}>
-          Workers
-        </button>
-        <button onClick={() => setView('incharges')} style={filterBtnStyle(view === 'incharges')}>
-          Incharges
-        </button>
-        <div style={{ width: 1, alignSelf: 'stretch', background: theme.borderColor, margin: '0 4px' }} />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: spacing.xl }}>
+      <WorkforceHeader
+        plantCount={(departments || []).length}
+        activeWorkerTotal={activeWorkerTotal}
+        activeInchargeTotal={activeInchargeTotal}
+        onAddWorker={() => setFormTarget({ mode: 'add', role: 'worker', department: defaultDeptId })}
+        onAddIncharge={() => setFormTarget({ mode: 'add', role: 'incharge', department: defaultDeptId })}
+      />
+
+      <WorkforceSummary plantCount={(departments || []).length} activeWorkerTotal={activeWorkerTotal} activeInchargeTotal={activeInchargeTotal} />
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', background: theme.surface, border: `1px solid ${theme.borderColor}`, borderRadius: radius.lg, padding: `${spacing.sm}px ${spacing.base}px` }}>
+        <FilterChips options={VIEW_OPTIONS} value={view} onChange={setView} />
+        <div style={{ width: 1, alignSelf: 'stretch', background: theme.borderColor }} />
+        <FilterChips options={STATUS_OPTIONS} value={statusFilter} onChange={setStatusFilter} />
+        <div style={{ width: 1, alignSelf: 'stretch', background: theme.borderColor }} />
         <PlantSelect options={plantFilterOptions(departments)} value={plantFilter} onChange={setPlantFilter} />
-        <div style={{ flex: 1 }} />
-        <button
-          onClick={() => setFormTarget({ mode: 'add', role: 'worker', department: defaultDeptId })}
-          style={theme.primaryBtnInline}
-        >
-          + Add worker
-        </button>
-        <button
-          onClick={() => setFormTarget({ mode: 'add', role: 'incharge', department: defaultDeptId })}
-          style={theme.ghostBtn}
-        >
-          + Add incharge
-        </button>
       </div>
 
       {formTarget && (
@@ -98,7 +132,7 @@ export function Workforce() {
       {deactivateTarget && (
         <ConfirmDialog
           title={`Deactivate ${deactivateTarget.role === 'worker' ? 'worker' : 'incharge'}?`}
-          message={`${deactivateTarget.name} will no longer be able to log in or appear in active lists. This can be reversed later by an admin, but treat it as permanent for now.`}
+          message={`${deactivateTarget.name} will no longer be able to log in or appear in active lists. You can reactivate them later from the Inactive filter on this page.`}
           confirmWord={deactivateTarget.name}
           confirmLabel="Deactivate"
           onConfirm={confirmDeactivate}
@@ -106,31 +140,110 @@ export function Workforce() {
         />
       )}
 
+      {reactivateTarget && (
+        <ConfirmDialog
+          title={`Reactivate ${reactivateTarget.role === 'worker' ? 'worker' : 'incharge'}?`}
+          message={`${reactivateTarget.name} will be able to log in again and will appear in active lists, dashboards and live polls.`}
+          confirmLabel="Reactivate"
+          onConfirm={confirmReactivate}
+          onCancel={() => setReactivateTarget(null)}
+        />
+      )}
+
       {relevantDepartments.length === 0 ? (
-        <EmptyState title="No plants found" />
+        <EmptyState icon="—" title="No plants found" message="Try a different plant filter." />
       ) : view === 'workers' ? (
         relevantDepartments.map((dept) => (
           <WorkerGroup
-            key={dept.id}
+            key={`${dept.id}-${statusFilter}`}
             dept={dept}
+            statusFilter={statusFilter}
             onOpenWorker={(id) => navigate(`/app/workforce/worker/${id}`)}
             onOpenIncharge={(id) => navigate(`/app/workforce/incharge/${id}`)}
             onEdit={(member) => setFormTarget({ mode: 'edit', member })}
             onDeactivate={setDeactivateTarget}
+            onReactivate={setReactivateTarget}
           />
         ))
       ) : (
         relevantDepartments.map((dept) => (
           <InchargeGroup
-            key={dept.id}
+            key={`${dept.id}-${statusFilter}`}
             dept={dept}
+            statusFilter={statusFilter}
             onOpenIncharge={(id) => navigate(`/app/workforce/incharge/${id}`)}
             onEdit={(member) => setFormTarget({ mode: 'edit', member })}
             onDeactivate={setDeactivateTarget}
+            onReactivate={setReactivateTarget}
           />
         ))
       )}
-    </>
+    </div>
+  );
+}
+
+function WorkforceHeader({ plantCount, activeWorkerTotal, activeInchargeTotal, onAddWorker, onAddIncharge }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+      <div>
+        <div style={{ fontSize: 26, fontWeight: 800, color: theme.textPrimary, letterSpacing: '-0.01em' }}>Workforce</div>
+        <div style={{ fontSize: 13.5, color: theme.textSecondary, marginTop: 6, fontWeight: 500 }}>
+          Manage workers and incharges across every plant · {plantCount} plant{plantCount === 1 ? '' : 's'} ·{' '}
+          {activeWorkerTotal} active workers · {activeInchargeTotal} active incharges
+        </div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Button variant="secondary" onClick={onAddIncharge}>
+          + Add incharge
+        </Button>
+        <Button variant="primary" onClick={onAddWorker}>
+          + Add worker
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// Three distinguished tiers rather than one undifferentiated row: plant
+// count is context, active workers is the primary/emphasized metric (the
+// number HR cares about first), active incharges is secondary. Matches the
+// same elevated, color-topped tile language established on the redesigned
+// Dashboard and Live Board. Figures come straight from the departments
+// list already loaded above (the same per-department `workers`/`incharges`
+// head counts the page already used) — this endpoint only reports active
+// head counts, so an "inactive" total isn't shown here rather than guessed.
+function WorkforceSummary({ plantCount, activeWorkerTotal, activeInchargeTotal }) {
+  const items = [
+    { key: 'workers', label: 'Active workers', value: activeWorkerTotal, tone: SUCCESS, emphasize: true },
+    { key: 'incharges', label: 'Active incharges', value: activeInchargeTotal, tone: theme.accent, emphasize: false },
+    { key: 'plants', label: 'Plants', value: plantCount, tone: theme.accent, emphasize: false },
+  ];
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: spacing.base }}>
+      {items.map((item) => (
+        <div
+          key={item.key}
+          className="ft-card-hover"
+          style={{
+            background: theme.surface,
+            border: `1px solid ${theme.borderColor}`,
+            borderTop: `3px solid ${item.tone}`,
+            borderRadius: radius.lg,
+            padding: spacing.lg,
+            boxShadow: elevation.card,
+          }}
+        >
+          <div style={{ fontSize: 12, fontWeight: 700, color: theme.textSecondary, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{item.label}</div>
+          <div
+            key={item.value}
+            className="ft-fade-in"
+            style={{ fontSize: item.emphasize ? 36 : 24, fontWeight: 800, fontFamily: theme.mono, color: item.tone, marginTop: 8, lineHeight: 1 }}
+          >
+            {item.value}
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -202,8 +315,8 @@ function MemberFormPanel({ target, departments, onCancel, onSaved }) {
   };
 
   return (
-    <div style={theme.card}>
-      <div style={{ fontWeight: 700, fontSize: 16, color: theme.textPrimary, marginBottom: 14 }}>
+    <div style={{ background: theme.surface, border: `1px solid ${theme.borderColor}`, borderRadius: radius.lg, padding: spacing.lg, boxShadow: elevation.card }}>
+      <div style={{ fontWeight: 800, fontSize: 16, color: theme.textPrimary, marginBottom: 14 }}>
         {isEdit ? `Edit ${role}` : `Add ${role}`}
       </div>
       <form onSubmit={handleSubmit}>
@@ -279,152 +392,215 @@ function MemberFormPanel({ target, departments, onCancel, onSaved }) {
         </div>
         {error && <div style={theme.errorText}>{error}</div>}
         <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-          <button type="submit" disabled={saving} style={{ ...theme.primaryBtnInline, opacity: saving ? 0.7 : 1 }}>
-            {saving ? 'Saving…' : isEdit ? 'Save changes' : `Add ${role}`}
-          </button>
-          <button type="button" onClick={onCancel} disabled={saving} style={theme.ghostBtn}>
+          <Button type="submit" variant="primary" loading={saving} loadingLabel="Saving…">
+            {isEdit ? 'Save changes' : `Add ${role}`}
+          </Button>
+          <Button type="button" variant="secondary" onClick={onCancel} disabled={saving}>
             Cancel
-          </button>
+          </Button>
         </div>
       </form>
     </div>
   );
 }
 
-function WorkerGroup({ dept, onOpenWorker, onOpenIncharge, onEdit, onDeactivate }) {
+function WorkerGroup({ dept, statusFilter, onOpenWorker, onOpenIncharge, onEdit, onDeactivate, onReactivate }) {
   const [page, setPage] = useState(1);
-  const { data } = useQuery({
-    queryKey: ['hr-workforce', 'worker', dept.id, page],
-    queryFn: () => getWorkforce({ role: 'worker', department: dept.id, page, limit: GROUP_PAGE_SIZE }),
+  const { data, isFetching } = useQuery({
+    queryKey: ['hr-workforce', 'worker', dept.id, statusFilter, page],
+    queryFn: () =>
+      getWorkforce({ role: 'worker', department: dept.id, active: activeParamFor(statusFilter), page, limit: GROUP_PAGE_SIZE }),
   });
 
   const pageItems = data?.items || [];
   const pageCount = data?.meta?.pageCount || 1;
-  // Head counts come from the departments endpoint, which aggregates them
-  // in the database — no need to hold the workforce here to count it.
-  const workerCount = dept.workers ?? 0;
+  // The departments endpoint's head count is active-only (it's the same
+  // number the Dashboard/plant cards use) — correct for this page's default
+  // Active view, but wrong once Inactive/All is picked, so those two use
+  // this query's own total instead.
+  const workerCount = statusFilter === 'active' ? dept.workers ?? 0 : data?.meta?.total ?? 0;
+  const workerCountLabel = statusFilter === 'inactive' ? `${workerCount} inactive workers` : `${workerCount} workers`;
+  // No cached data yet for this exact page/filter combination — show
+  // skeleton rows instead of either blanking to the empty state or leaving
+  // the previous page's rows on screen with a stale page number.
+  const showSkeleton = isFetching && !data;
 
   return (
-    <div style={{ ...theme.card, padding: 0, overflow: 'hidden' }}>
+    <div className="ft-fade-in" style={{ background: theme.surface, border: `1px solid ${theme.borderColor}`, borderRadius: radius.lg, overflow: 'hidden' }}>
       <div style={theme.groupHead}>
         <span style={chipStyle(dept.code)}>{dept.code}</span>
         <span style={{ fontWeight: 700, color: theme.textPrimary }}>{dept.name}</span>
         <span style={{ fontSize: 12, color: theme.mutedColor }}>
-          {dept.incharges ?? 0} incharges · {workerCount} workers
+          {dept.incharges ?? 0} incharges · {workerCountLabel}
         </span>
       </div>
-      {workerCount === 0 ? (
-        <div style={{ padding: 16, fontSize: 13, color: theme.textSecondary }}>No workers in this plant.</div>
+      {!showSkeleton && workerCount === 0 ? (
+        <div style={{ padding: 20, textAlign: 'center', fontSize: 13, color: theme.mutedColor }}>
+          {statusFilter === 'inactive' ? 'No inactive workers in this plant.' : 'No workers in this plant.'}
+        </div>
       ) : (
         <>
-          <table style={theme.table}>
-            <thead>
-              <tr style={theme.tableHeadRow}>
-                <th style={theme.th}>Worker</th>
-                <th style={theme.th}>Emp ID</th>
-                <th style={theme.th}>Incharge</th>
-                <th style={theme.th}>Equipment / process</th>
-                <th style={theme.th}>Shift</th>
-                <th style={theme.th}>Push</th>
-                <th style={theme.th}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {pageItems.map((w) => (
-                <tr key={w.id} style={theme.tr}>
-                  <td style={theme.td}>
-                    <NameLinkButton onClick={() => onOpenWorker(w.id)}>{w.name}</NameLinkButton>
-                  </td>
-                  <td style={{ ...theme.td, fontFamily: theme.mono }}>{w.employeeId}</td>
-                  <td style={theme.td}>
-                    {w.incharge ? <NameLinkButton onClick={() => onOpenIncharge(w.incharge.id)}>{w.incharge.name}</NameLinkButton> : '—'}
-                  </td>
-                  <td style={theme.td}>
-                    {w.equipment} · {w.process}
-                  </td>
-                  <td style={theme.td}>{w.shiftName || (w.shiftStart && w.shiftEnd ? `${w.shiftStart}–${w.shiftEnd}` : '—')}</td>
-                  <td style={theme.td}>
-                    <span
-                      style={{
-                        width: 9,
-                        height: 9,
-                        borderRadius: '50%',
-                        display: 'inline-block',
-                        background: w.hasNotifications ? SUCCESS : theme.borderColor,
-                      }}
-                    />
-                  </td>
-                  <td style={{ ...theme.td, display: 'flex', gap: 6 }}>
-                    <button onClick={() => onEdit(w)} style={theme.ghostBtn}>
-                      Edit
-                    </button>
-                    <button onClick={() => onDeactivate(w)} style={theme.ghostBtn}>
-                      Deactivate
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <Pagination page={page} pageCount={pageCount} onChange={setPage} />
+          <div style={{ overflowX: 'auto' }}>
+            <Table>
+              <TableHead>
+                <Th>Worker</Th>
+                <Th>Emp ID</Th>
+                <Th>Incharge</Th>
+                <Th>Equipment / process</Th>
+                <Th>Shift</Th>
+                <Th>Notifications</Th>
+                <Th></Th>
+              </TableHead>
+              {showSkeleton ? (
+                <SkeletonTableRows columns={7} rows={Math.min(GROUP_PAGE_SIZE, 4)} />
+              ) : (
+                <tbody key={page} className="ft-fade-in">
+                  {pageItems.map((w) => (
+                    <TableRow key={w.id}>
+                      <Td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <Avatar name={w.name} size={30} />
+                          <div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <NameLinkButton onClick={() => onOpenWorker(w.id)}>{w.name}</NameLinkButton>
+                              {!w.isActive && <Badge tone="neutral">Inactive</Badge>}
+                            </div>
+                          </div>
+                        </div>
+                      </Td>
+                      <Td>
+                        <span style={{ fontFamily: theme.mono, fontSize: 12.5, color: w.isActive ? theme.textSecondary : theme.mutedColor }}>{w.employeeId}</span>
+                      </Td>
+                      <Td>
+                        {w.incharge ? (
+                          <NameLinkButton onClick={() => onOpenIncharge(w.incharge.id)}>{w.incharge.name}</NameLinkButton>
+                        ) : (
+                          <span style={{ color: theme.mutedColor }}>—</span>
+                        )}
+                      </Td>
+                      <Td>
+                        <span style={{ fontSize: 13, color: w.isActive ? theme.textSecondary : theme.mutedColor }}>
+                          {w.equipment} · {w.process}
+                        </span>
+                      </Td>
+                      <Td>
+                        <span style={{ fontSize: 13, color: w.isActive ? theme.textSecondary : theme.mutedColor }}>
+                          {w.shiftName || (w.shiftStart && w.shiftEnd ? `${w.shiftStart}–${w.shiftEnd}` : '—')}
+                        </span>
+                      </Td>
+                      <Td>
+                        <Badge tone={w.hasNotifications ? 'success' : 'neutral'}>{w.hasNotifications ? 'On' : 'Off'}</Badge>
+                      </Td>
+                      <Td>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <Button variant="secondary" size="sm" onClick={() => onEdit(w)}>
+                            Edit
+                          </Button>
+                          {w.isActive ? (
+                            <Button variant="secondary" size="sm" onClick={() => onDeactivate(w)}>
+                              Deactivate
+                            </Button>
+                          ) : (
+                            <Button variant="success" size="sm" onClick={() => onReactivate(w)}>
+                              Reactivate
+                            </Button>
+                          )}
+                        </div>
+                      </Td>
+                    </TableRow>
+                  ))}
+                </tbody>
+              )}
+            </Table>
+          </div>
+          <Pagination page={page} pageCount={pageCount} onChange={setPage} disabled={isFetching} />
         </>
       )}
     </div>
   );
 }
 
-function InchargeGroup({ dept, onOpenIncharge, onEdit, onDeactivate }) {
+function InchargeGroup({ dept, statusFilter, onOpenIncharge, onEdit, onDeactivate, onReactivate }) {
   const [page, setPage] = useState(1);
-  const { data } = useQuery({
-    queryKey: ['hr-workforce', 'incharge', dept.id, page],
-    queryFn: () => getWorkforce({ role: 'incharge', department: dept.id, page, limit: GROUP_PAGE_SIZE }),
+  const { data, isFetching } = useQuery({
+    queryKey: ['hr-workforce', 'incharge', dept.id, statusFilter, page],
+    queryFn: () =>
+      getWorkforce({ role: 'incharge', department: dept.id, active: activeParamFor(statusFilter), page, limit: GROUP_PAGE_SIZE }),
   });
 
   const pageItems = data?.items || [];
   const pageCount = data?.meta?.pageCount || 1;
-  const inchargeCount = dept.incharges ?? 0;
+  const inchargeCount = statusFilter === 'active' ? dept.incharges ?? 0 : data?.meta?.total ?? 0;
+  const inchargeCountLabel = statusFilter === 'inactive' ? `${inchargeCount} inactive incharges` : `${inchargeCount} incharges`;
+  const showSkeleton = isFetching && !data;
 
   return (
-    <div style={{ ...theme.card, padding: 0, overflow: 'hidden' }}>
+    <div className="ft-fade-in" style={{ background: theme.surface, border: `1px solid ${theme.borderColor}`, borderRadius: radius.lg, overflow: 'hidden' }}>
       <div style={theme.groupHead}>
         <span style={chipStyle(dept.code)}>{dept.code}</span>
         <span style={{ fontWeight: 700, color: theme.textPrimary }}>{dept.name}</span>
-        <span style={{ fontSize: 12, color: theme.mutedColor }}>{inchargeCount} incharges</span>
+        <span style={{ fontSize: 12, color: theme.mutedColor }}>{inchargeCountLabel}</span>
       </div>
-      {inchargeCount === 0 ? (
-        <div style={{ padding: 16, fontSize: 13, color: theme.textSecondary }}>No incharges in this plant.</div>
+      {!showSkeleton && inchargeCount === 0 ? (
+        <div style={{ padding: 20, textAlign: 'center', fontSize: 13, color: theme.mutedColor }}>
+          {statusFilter === 'inactive' ? 'No inactive incharges in this plant.' : 'No incharges in this plant.'}
+        </div>
       ) : (
         <>
-          <table style={theme.table}>
-            <thead>
-              <tr style={theme.tableHeadRow}>
-                <th style={theme.th}>Incharge</th>
-                <th style={theme.th}>Shift</th>
-                <th style={theme.th}>Workers under them</th>
-                <th style={theme.th}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {pageItems.map((i) => (
-                <tr key={i.id} style={theme.tr}>
-                  <td style={theme.td}>
-                    <NameLinkButton onClick={() => onOpenIncharge(i.id)}>{i.name}</NameLinkButton>
-                  </td>
-                  <td style={theme.td}>{i.shiftName ? `${i.shiftName} · ${i.shiftStart}–${i.shiftEnd}` : `${i.shiftStart}–${i.shiftEnd}`}</td>
-                  <td style={theme.td}>{i.reportCount ?? 0} workers</td>
-                  <td style={{ ...theme.td, display: 'flex', gap: 6 }}>
-                    <button onClick={() => onEdit(i)} style={theme.ghostBtn}>
-                      Edit
-                    </button>
-                    <button onClick={() => onDeactivate(i)} style={theme.ghostBtn}>
-                      Deactivate
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <Pagination page={page} pageCount={pageCount} onChange={setPage} />
+          <div style={{ overflowX: 'auto' }}>
+            <Table>
+              <TableHead>
+                <Th>Incharge</Th>
+                <Th>Shift</Th>
+                <Th>Workers under them</Th>
+                <Th></Th>
+              </TableHead>
+              {showSkeleton ? (
+                <SkeletonTableRows columns={4} rows={Math.min(GROUP_PAGE_SIZE, 4)} />
+              ) : (
+                <tbody key={page} className="ft-fade-in">
+                  {pageItems.map((i) => (
+                    <TableRow key={i.id}>
+                      <Td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <Avatar name={i.name} size={30} />
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <NameLinkButton onClick={() => onOpenIncharge(i.id)}>{i.name}</NameLinkButton>
+                            {!i.isActive && <Badge tone="neutral">Inactive</Badge>}
+                          </div>
+                        </div>
+                      </Td>
+                      <Td>
+                        <span style={{ fontSize: 13, color: i.isActive ? theme.textSecondary : theme.mutedColor }}>
+                          {i.shiftName ? `${i.shiftName} · ${i.shiftStart}–${i.shiftEnd}` : `${i.shiftStart}–${i.shiftEnd}`}
+                        </span>
+                      </Td>
+                      <Td>
+                        <Badge tone="info">{i.reportCount ?? 0} workers</Badge>
+                      </Td>
+                      <Td>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <Button variant="secondary" size="sm" onClick={() => onEdit(i)}>
+                            Edit
+                          </Button>
+                          {i.isActive ? (
+                            <Button variant="secondary" size="sm" onClick={() => onDeactivate(i)}>
+                              Deactivate
+                            </Button>
+                          ) : (
+                            <Button variant="success" size="sm" onClick={() => onReactivate(i)}>
+                              Reactivate
+                            </Button>
+                          )}
+                        </div>
+                      </Td>
+                    </TableRow>
+                  ))}
+                </tbody>
+              )}
+            </Table>
+          </div>
+          <Pagination page={page} pageCount={pageCount} onChange={setPage} disabled={isFetching} />
         </>
       )}
     </div>

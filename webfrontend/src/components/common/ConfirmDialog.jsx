@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { theme } from '../../theme';
+import { Dialog } from './Dialog';
 
 // A confirmation dialog styled to match the app. Destructive/irreversible
 // actions (deactivating someone, a plant, an HR login) pass `confirmWord` to
@@ -29,48 +30,47 @@ export function ConfirmDialog({ title, message, confirmWord, confirmLabel = 'Dea
   };
 
   return (
-    <div style={theme.modalOverlay} onMouseDown={(e) => e.target === e.currentTarget && !busy && onCancel()}>
-      <div style={theme.modalCard}>
-        <div style={theme.modalIconRing}>!</div>
-        <div style={{ fontWeight: 800, fontSize: 18, color: theme.textPrimary, marginBottom: 8 }}>{title}</div>
-        <div style={{ fontSize: 14, color: theme.textSecondary, lineHeight: 1.55, marginBottom: 18 }}>{message}</div>
+    <Dialog onClose={onCancel} disableOverlayClose={busy}>
+      <div style={theme.modalIconRing}>!</div>
+      <div style={{ fontWeight: 800, fontSize: 18, color: theme.textPrimary, marginBottom: 8 }}>{title}</div>
+      <div style={{ fontSize: 14, color: theme.textSecondary, lineHeight: 1.55, marginBottom: 18 }}>{message}</div>
 
-        {requiresTyping && (
-          <>
-            <label style={theme.label}>
-              Type <strong style={{ color: theme.textPrimary }}>{confirmWord}</strong> to confirm
-            </label>
-            <input
-              autoFocus
-              value={typed}
-              onChange={(e) => setTyped(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleConfirm()}
-              style={theme.input}
-              placeholder={confirmWord}
-              disabled={busy}
-            />
-          </>
-        )}
+      {requiresTyping && (
+        <>
+          <label style={theme.label}>
+            Type <strong style={{ color: theme.textPrimary }}>{confirmWord}</strong> to confirm
+          </label>
+          <input
+            autoFocus
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleConfirm()}
+            style={theme.input}
+            placeholder={confirmWord}
+            disabled={busy}
+          />
+        </>
+      )}
 
-        {error && <div style={theme.errorText}>{error}</div>}
+      {error && <div style={theme.errorText}>{error}</div>}
 
-        <div style={{ display: 'flex', gap: 8, marginTop: 20, justifyContent: 'flex-end' }}>
-          <button onClick={onCancel} disabled={busy} style={theme.ghostBtn}>
-            Cancel
-          </button>
-          <button
-            onClick={handleConfirm}
-            disabled={!matches || busy}
-            style={
-              requiresTyping
-                ? { ...theme.dangerBtnFilled, opacity: matches && !busy ? 1 : 0.4, cursor: matches && !busy ? 'pointer' : 'not-allowed' }
-                : { ...theme.primaryBtnInline, opacity: busy ? 0.7 : 1, cursor: busy ? 'not-allowed' : 'pointer' }
-            }
-          >
-            {busy ? 'Working…' : confirmLabel}
-          </button>
-        </div>
+      <div style={{ display: 'flex', gap: 8, marginTop: 20, justifyContent: 'flex-end' }}>
+        <button onClick={onCancel} disabled={busy} className="ft-btn ft-btn-secondary" style={theme.ghostBtn}>
+          Cancel
+        </button>
+        <button
+          onClick={handleConfirm}
+          disabled={!matches || busy}
+          className={requiresTyping ? 'ft-btn ft-btn-danger' : 'ft-btn ft-btn-primary'}
+          style={
+            requiresTyping
+              ? { ...theme.dangerBtnFilled, opacity: matches && !busy ? 1 : 0.4, cursor: matches && !busy ? 'pointer' : 'not-allowed' }
+              : { ...theme.primaryBtnInline, opacity: busy ? 0.7 : 1, cursor: busy ? 'not-allowed' : 'pointer' }
+          }
+        >
+          {busy ? 'Working…' : confirmLabel}
+        </button>
       </div>
-    </div>
+    </Dialog>
   );
 }

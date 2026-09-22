@@ -27,6 +27,37 @@ const parseShiftTimes = (body, fallbackStart, fallbackEnd) => {
   return { shiftStart, shiftEnd };
 };
 
+// Parses optional fromDate/toDate — same YYYY-MM-DD-only format and UTC
+// midnight convention the existing single `date` filter already uses (both
+// ultimately come from an <input type="date">, which only ever produces
+// YYYY-MM-DD) — into a Prisma range filter for the `date` column. Returns
+// { error } on anything invalid so callers can 400 instead of silently
+// misfiltering or handing Prisma a NaN Date.
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const parseDateRangeFilter = (fromDate, toDate) => {
+  const range = {};
+
+  if (fromDate !== undefined) {
+    if (!DATE_ONLY_RE.test(fromDate)) return { error: 'fromDate must be in YYYY-MM-DD format' };
+    const gte = new Date(`${fromDate}T00:00:00.000Z`);
+    if (Number.isNaN(gte.getTime())) return { error: 'fromDate is not a valid date' };
+    range.gte = gte;
+  }
+
+  if (toDate !== undefined) {
+    if (!DATE_ONLY_RE.test(toDate)) return { error: 'toDate must be in YYYY-MM-DD format' };
+    const lte = new Date(`${toDate}T00:00:00.000Z`);
+    if (Number.isNaN(lte.getTime())) return { error: 'toDate is not a valid date' };
+    range.lte = lte;
+  }
+
+  if (range.gte && range.lte && range.gte > range.lte) {
+    return { error: 'fromDate must be on or before toDate' };
+  }
+
+  return { range };
+};
+
 const HR_ROLES = ['hr', 'admin', 'superadmin'];
 
 const formatHrUser = (user) => ({
@@ -273,12 +304,13 @@ exports.getDashboard = async (req, res, next) => {
 exports.getPolls = async (req, res, next) => {
   try {
     await autoCloseExpiredPolls();
-    const { status, department, q, shiftStart, shiftEnd, date, summary } = req.query;
+    const { status, department, q, shiftStart, shiftEnd, date, fromDate, toDate, summary } = req.query;
 
     // Filters that define which polls exist for the current view. Shift/date
     // are applied on top of this for the rows, but the shift dropdown is
     // built from `baseWhere` so its options don't shrink to whatever the
-    // current page happens to contain.
+    // current page happens to contain — a date range narrows it the same
+    // way the single-day filter already does, not through baseWhere either.
     const baseWhere = {};
     if (status === 'open' || status === 'closed') baseWhere.status = status;
     if (department) baseWhere.departmentId = department;
@@ -294,7 +326,21 @@ exports.getPolls = async (req, res, next) => {
       where.shiftStart = shiftStart;
       where.shiftEnd = shiftEnd;
     }
-    if (date) where.date = new Date(`${date}T00:00:00.000Z`);
+
+    if (date) {
+      // Exact single-day filter (Attendance's existing behavior) — takes
+      // priority over fromDate/toDate if a caller somehow sent both, rather
+      // than trying to combine an exact match with a range.
+      where.date = new Date(`${date}T00:00:00.000Z`);
+    } else if (fromDate !== undefined || toDate !== undefined) {
+      const parsedRange = parseDateRangeFilter(fromDate, toDate);
+      if (parsedRange.error) {
+        return res.status(400).json({ success: false, message: parsedRange.error });
+      }
+      // fromDate-only or toDate-only both mean an open-ended range, not "no
+      // filter" — an explicit boundary the caller asked for either way.
+      where.date = parsedRange.range;
+    }
 
     const pagination = parsePagination(req.query, { defaultLimit: 120 });
 
@@ -1003,10 +1049,23 @@ exports.exportPollPdf = async (req, res, next) => {
 
 exports.exportManpowerExcel = async (req, res, next) => {
   try {
-    const { status } = req.query;
+    const { status, fromDate, toDate } = req.query;
     const where = {};
     if (status === 'open' || status === 'closed') where.status = status;
     else where.status = 'closed';
+
+    // Deliberately still every plant regardless of what's selected in
+    // Reports.jsx (matches this export's own "across all recent polls,
+    // every plant" description) — but the date range IS what the caller is
+    // currently looking at, so exporting a fixed "most recent 80, any date"
+    // here would silently disagree with the filtered list on screen.
+    if (fromDate !== undefined || toDate !== undefined) {
+      const parsedRange = parseDateRangeFilter(fromDate, toDate);
+      if (parsedRange.error) {
+        return res.status(400).json({ success: false, message: parsedRange.error });
+      }
+      where.date = parsedRange.range;
+    }
 
     const polls = await prisma.poll.findMany({
       where,

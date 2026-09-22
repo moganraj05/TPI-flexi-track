@@ -54,3 +54,168 @@ a {
     opacity: 0.35;
   }
 }
+
+/* ---- Design-system interaction foundation ----
+   Keep hex values here in sync with src/tokens.js if a color token changes;
+   plain inline styles can't express :hover/:focus-visible, so the new
+   shared components (Button, Table row, Dialog, Toast, Skeleton) opt into
+   these classes for the parts inline styles can't cover themselves. */
+
+:focus-visible {
+  outline: 2px solid #264653;
+  outline-offset: 2px;
+}
+
+/* Reuses the existing `livepulse` keyframe (already used by the Topbar's
+   live dot) for any other "this is live" indicator, instead of each one
+   defining its own pulse. */
+.ft-live-dot {
+  animation: livepulse 1.6s ease-in-out infinite;
+}
+
+.ft-btn {
+  transition: filter 120ms ease-out, opacity 120ms ease-out, transform 80ms ease-out, background-color 120ms ease-out;
+}
+.ft-btn:not(:disabled):hover {
+  filter: brightness(1.06);
+}
+.ft-btn:not(:disabled):active {
+  transform: scale(0.98);
+}
+.ft-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.ft-btn-secondary:not(:disabled):hover,
+.ft-btn-success:not(:disabled):hover {
+  background: #cadee7;
+}
+.ft-btn-danger-outline:not(:disabled):hover {
+  background: #fee2e2;
+}
+
+.ft-table-row {
+  transition: background-color 120ms ease-out;
+}
+.ft-table-row:hover {
+  background: #cadee7;
+}
+
+/* Subtle warning-tinted row background for "needs a response" rows — stays
+   on the same amber family as the app's WARNING token (never red), and
+   because it shares `.ft-table-row`'s transition, a row that goes from
+   pending to answered (or back) eases between the two instead of snapping. */
+.ft-row-pending {
+  background: #fef3c7;
+}
+.ft-row-pending:hover {
+  background: #fde9b0;
+}
+
+.ft-card-hover {
+  transition: box-shadow 180ms ease-out, border-color 180ms ease-out;
+}
+.ft-card-hover:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  border-color: #264653;
+}
+
+/* A short, subtle entrance — combined with `key={value}` on the element it's
+   applied to, this replays whenever that value changes (e.g. a stat count
+   ticking up), instead of the number just snapping to its new value. */
+.ft-fade-in {
+  animation: ft-fade-in 180ms ease-out;
+}
+@keyframes ft-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ft-modal-overlay {
+  animation: ft-overlay-in 180ms ease-out;
+}
+@keyframes ft-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.ft-modal-card {
+  animation: ft-modal-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes ft-modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.ft-toast {
+  animation: ft-toast-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes ft-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.ft-toast-exit {
+  animation: ft-toast-out 180ms ease-in forwards;
+}
+@keyframes ft-toast-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.ft-skeleton {
+  background: linear-gradient(90deg, #cadee7 25%, #dbe9ef 37%, #cadee7 63%);
+  background-size: 400% 100%;
+  animation: ft-skeleton-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes ft-skeleton-shimmer {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ft-btn,
+  .ft-table-row,
+  .ft-card-hover,
+  .ft-modal-overlay,
+  .ft-modal-card,
+  .ft-toast,
+  .ft-toast-exit,
+  .ft-fade-in,
+  .ft-live-dot,
+  .ft-skeleton {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

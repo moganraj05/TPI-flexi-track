@@ -3,6 +3,7 @@ const { autoCloseExpiredPolls } = require('../utils/poll');
 const { ensurePollsForDepartment } = require('../services/poll-automation.service');
 const { hashPassword } = require('../utils/password');
 const { formatDept } = require('../utils/pollReport');
+const { parsePagination, buildMeta } = require('../utils/pagination');
 const { emitPollUpdate } = require('../realtime');
 const {
   isValidShiftTime,
@@ -171,12 +172,28 @@ exports.getMyPolls = async (req, res, next) => {
     await autoCloseExpiredPolls({ departmentId: deptId });
     await ensurePollsForDepartment(deptId);
 
-    const polls = await prisma.poll.findMany({
-      where: { departmentId: deptId },
-      orderBy: { createdAt: 'desc' },
-      take: 50,
-      include: pollInclude,
-    });
+    // defaultLimit: 50 matches the hardcoded `take: 50` this replaces, so a
+    // caller that sends neither `page` nor `limit` (any client not yet
+    // updated to ask for a page) sees exactly the same first-50 it always
+    // has — only a client that actually requests a page gets the rest of
+    // the department's poll history it couldn't reach before.
+    const pagination = parsePagination(req.query, { defaultLimit: 50 });
+
+    const [total, polls] = await Promise.all([
+      prisma.poll.count({ where: { departmentId: deptId } }),
+      prisma.poll.findMany({
+        where: { departmentId: deptId },
+        // id tiebreaker: processAllShiftPolls can create several polls in
+        // the same automation tick with identical (to the millisecond)
+        // createdAt values — without a stable secondary sort, those could
+        // land in a different relative order across two page fetches and
+        // either skip or repeat one at the page boundary.
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: pagination.skip,
+        take: pagination.take,
+        include: pollInclude,
+      }),
+    ]);
 
     const data = await Promise.all(
       polls.map(async (poll) => {
@@ -185,7 +202,7 @@ exports.getMyPolls = async (req, res, next) => {
       })
     );
 
-    res.json({ success: true, data });
+    res.json({ success: true, data, meta: buildMeta(pagination, total) });
   } catch (error) {
     next(error);
   }

@@ -1,13 +1,19 @@
 import { theme } from '../../theme';
 
-export function Pagination({ page, pageCount, onChange }) {
+// `disabled` is optional (defaults to false, matching every existing call
+// site's behavior exactly) — pages that refetch on a page change without
+// showing a full loading state can pass e.g. TanStack Query's `isFetching`
+// so a second tap can't fire an overlapping request while one is in flight.
+export function Pagination({ page, pageCount, onChange, disabled = false }) {
   if (pageCount <= 1) return null;
+  const prevDisabled = page <= 1 || disabled;
+  const nextDisabled = page >= pageCount || disabled;
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, padding: '14px 0 2px' }}>
       <button
         onClick={() => onChange(page - 1)}
-        disabled={page <= 1}
-        style={{ ...theme.ghostBtn, opacity: page <= 1 ? 0.45 : 1, cursor: page <= 1 ? 'default' : 'pointer' }}
+        disabled={prevDisabled}
+        style={{ ...theme.ghostBtn, opacity: prevDisabled ? 0.45 : 1, cursor: prevDisabled ? 'default' : 'pointer' }}
       >
         ← Prev
       </button>
@@ -16,8 +22,8 @@ export function Pagination({ page, pageCount, onChange }) {
       </span>
       <button
         onClick={() => onChange(page + 1)}
-        disabled={page >= pageCount}
-        style={{ ...theme.ghostBtn, opacity: page >= pageCount ? 0.45 : 1, cursor: page >= pageCount ? 'default' : 'pointer' }}
+        disabled={nextDisabled}
+        style={{ ...theme.ghostBtn, opacity: nextDisabled ? 0.45 : 1, cursor: nextDisabled ? 'default' : 'pointer' }}
       >
         Next →
       </button>

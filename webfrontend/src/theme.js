@@ -1,31 +1,44 @@
 // Design tokens ported from the FlexiTrack Claude Design canvas (charcoal palette,
 // dark sidebar, comfortable density — the canvas's default combination).
+//
+// The actual color/spacing/radius/elevation/motion values now live in
+// tokens.js as the formal design-token source; everything below is built on
+// top of them so every existing export here keeps its exact prior value.
+
+import { colors as TOKENS, spacing, elevation } from './tokens';
 
 const FONT = "'Manrope',sans-serif";
 const MONO = "'IBM Plex Mono',monospace";
 
 const PAL = {
-  accent: '#264653',
-  accentSoft: '#95bece',
-  sidebarBg: '#0f1c22',
-  sidebarText: '#cadee7',
-  sidebarMuted: '#609db6',
-  sidebarActiveBg: '#1f3943',
-  bg: '#cadee7',
-  surface: '#ffffff',
-  border: '#95bece',
-  textPrimary: '#080e11',
-  textSecondary: '#3f7489',
+  accent: TOKENS.accent,
+  accentSoft: TOKENS.accentSoft,
+  sidebarBg: TOKENS.sidebarBg,
+  sidebarText: TOKENS.sidebarText,
+  sidebarMuted: TOKENS.sidebarMuted,
+  sidebarActiveBg: TOKENS.sidebarActiveBg,
+  bg: TOKENS.background,
+  surface: TOKENS.surface,
+  border: TOKENS.border,
+  textPrimary: TOKENS.textPrimary,
+  textSecondary: TOKENS.textSecondary,
 };
 
-const D = { row: 14, card: 20, gap: 16 };
+// `row` has no equivalent in the new spacing scale (it's an odd legacy
+// value used only for table cell padding) — left as a literal so existing
+// table row heights don't shift. `card`/`gap` already matched spacing.lg/
+// spacing.base exactly, so they're now sourced from the scale.
+const D = { row: 14, card: spacing.lg, gap: spacing.base };
 
-export const SUCCESS = '#16a34a';
-export const SUCCESS_SOFT = '#dcfce7';
-export const DANGER = '#dc2626';
-export const DANGER_SOFT = '#fee2e2';
-export const WARNING = '#b45309';
-export const WARNING_SOFT = '#fef3c7';
+export const SUCCESS = TOKENS.success;
+export const SUCCESS_SOFT = TOKENS.successSoft;
+export const DANGER = TOKENS.danger;
+export const DANGER_SOFT = TOKENS.dangerSoft;
+export const WARNING = TOKENS.warning;
+export const WARNING_SOFT = TOKENS.warningSoft;
+// New — no "informational" status existed before.
+export const INFO = TOKENS.info;
+export const INFO_SOFT = TOKENS.infoSoft;
 
 // Soft chip colors cycled by department code so any real department (not just a
 // fixed hardcoded list) still gets a distinct, readable chip.
@@ -85,7 +98,7 @@ export const theme = {
   textPrimary: PAL.textPrimary, textSecondary: PAL.textSecondary, surface: PAL.surface, bg: PAL.bg,
 
   loginPage: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: PAL.bg, fontFamily: FONT, padding: 20 },
-  loginCard: { width: '100%', maxWidth: 380, background: PAL.surface, border: `1px solid ${PAL.border}`, borderRadius: 16, padding: 32, boxShadow: '0 1px 3px rgba(0,0,0,0.06)' },
+  loginCard: { width: '100%', maxWidth: 380, background: PAL.surface, border: `1px solid ${PAL.border}`, borderRadius: 16, padding: 32, boxShadow: elevation.card },
   loginBrandRow: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 22 },
   loginMark: { width: 34, height: 34, borderRadius: 9, background: PAL.accent, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 14, flexShrink: 0 },
   label: { display: 'block', fontSize: 12, fontWeight: 700, color: PAL.textSecondary, marginBottom: 6, marginTop: 14 },
@@ -144,7 +157,19 @@ export const theme = {
   errorText: { color: DANGER, fontSize: 13, marginTop: 10 },
 
   modalOverlay: { position: 'fixed', inset: 0, background: 'rgba(8,14,17,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 },
-  modalCard: { width: '100%', maxWidth: 420, background: PAL.surface, borderRadius: 16, padding: 26, boxShadow: '0 20px 50px rgba(0,0,0,0.35)', border: `1px solid ${PAL.border}` },
+  modalCard: { width: '100%', maxWidth: 420, background: PAL.surface, borderRadius: 16, padding: 26, boxShadow: elevation.modal, border: `1px solid ${PAL.border}` },
   modalIconRing: { width: 44, height: 44, borderRadius: '50%', background: DANGER_SOFT, color: DANGER, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 800, marginBottom: 14 },
   dangerBtnFilled: { padding: '10px 18px', borderRadius: 8, border: 'none', background: DANGER, color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: FONT },
+
+  // Formalizes the `{...theme.ghostBtn, color: SUCCESS, borderColor: SUCCESS}`
+  // override that LiveBoard/AttendanceDetail/Workforce each redefine inline
+  // for their "Yes" / "Reactivate" actions — new call sites should use this
+  // (or the new <Button variant="success"> component) instead of repeating
+  // the override.
+  successBtnOutline: { padding: '6px 12px', borderRadius: 7, border: `1px solid ${SUCCESS}`, background: 'transparent', color: SUCCESS, fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: FONT },
+
+  // Positions the new stacked toast list (see ToastContext.jsx) — individual
+  // toast items reuse `toast` above but render `position: 'static'` inside
+  // this wrapper instead of each positioning themselves.
+  toastStack: { position: 'fixed', bottom: 24, right: 24, zIndex: 60, display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' },
 };

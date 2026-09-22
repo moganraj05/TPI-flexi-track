@@ -36,12 +36,14 @@ export const getPolls = async ({
   shiftStart,
   shiftEnd,
   date,
+  fromDate,
+  toDate,
   page,
   limit,
   summary,
 } = {}) => {
   const { data } = await client.get('/hr/polls', {
-    params: { status, department, q, shiftStart, shiftEnd, date, page, limit, summary },
+    params: { status, department, q, shiftStart, shiftEnd, date, fromDate, toDate, page, limit, summary },
   });
   return { items: data.data, meta: data.meta };
 };
@@ -72,9 +74,14 @@ export const getWorkforce = async ({ active = 'true', role, department, q, page,
   return { items: data.data, meta: data.meta };
 };
 
-export const getEmployee = async (employeeId) => {
-  const { data } = await client.get(`/hr/employees/${employeeId}`);
-  return data.data;
+// page/limit are optional — omitted, the backend keeps its own existing
+// default window (40), so InchargeDetail's call site (which doesn't need
+// history pagination) is unaffected. `meta` (the history list's pagination
+// info) is merged in alongside employee/directReports/history rather than
+// dropped, the way the previous `return data.data` used to.
+export const getEmployee = async (employeeId, { page, limit } = {}) => {
+  const { data } = await client.get(`/hr/employees/${employeeId}`, { params: { page, limit } });
+  return { ...data.data, meta: data.meta };
 };
 
 export const getLiveBoard = async () => {
@@ -163,9 +170,13 @@ export const downloadPollPdf = async (pollId, filenameHint = 'poll') => {
   downloadBlob(data, `FlexiTrack_${filenameHint}.pdf`);
 };
 
-export const downloadManpowerExcel = async (status = 'closed') => {
+// fromDate/toDate default to undefined (no filter) rather than requiring
+// callers to pass them — this export intentionally stays "every plant"
+// regardless of the caller's plant filter, but the date range is the one
+// filter it does mirror, so it can't silently disagree with what's on screen.
+export const downloadManpowerExcel = async ({ status = 'closed', fromDate, toDate } = {}) => {
   const { data } = await client.get('/hr/export/manpower.xlsx', {
-    params: { status },
+    params: { status, fromDate, toDate },
     responseType: 'blob',
   });
   downloadBlob(data, 'FlexiTrack_HR_Manpower_Plan.xlsx');

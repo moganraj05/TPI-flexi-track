@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getEmployee } from '../api/hr';
@@ -6,22 +7,44 @@ import { CenteredSpinner } from '../components/common/Spinner';
 import { EmptyState } from '../components/common/EmptyState';
 import { Avatar } from '../components/common/Avatar';
 import { RosterRow } from '../components/common/RosterRow';
+import { Pagination } from '../components/common/Pagination';
 import { formatDate } from '../utils/format';
+
+const HISTORY_PAGE_SIZE = 10;
 
 export function WorkerDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [page, setPage] = useState(1);
 
-  const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['hr-employee', id],
-    queryFn: () => getEmployee(id),
+  // This route can in principle show a different worker (:id changes)
+  // without the component unmounting — reset back to page 1 so a new
+  // worker's history doesn't open wherever the previous one's pagination
+  // happened to be left.
+  useEffect(() => {
+    setPage(1);
+  }, [id]);
+
+  const { data, isLoading, isFetching, isError, error } = useQuery({
+    queryKey: ['hr-employee', id, page],
+    queryFn: () => getEmployee(id, { page, limit: HISTORY_PAGE_SIZE }),
   });
+
+  // Safety clamp for a page that no longer exists (e.g. requested before a
+  // resync, or reached some other way) — snap back to the last real page
+  // instead of rendering a false "no responses" empty state.
+  useEffect(() => {
+    if (data?.meta?.pageCount && page > data.meta.pageCount) {
+      setPage(data.meta.pageCount);
+    }
+  }, [data, page]);
 
   if (isLoading) return <CenteredSpinner label="Loading worker…" />;
   if (isError) return <EmptyState title="Could not load worker" message={error?.message} />;
 
-  const { employee, history } = data;
+  const { employee, history, meta } = data;
   const incharge = employee.incharge;
+  const pageCount = meta?.pageCount || 1;
 
   return (
     <>
@@ -81,24 +104,27 @@ export function WorkerDetail() {
         {history.length === 0 ? (
           <div style={{ padding: 16, fontSize: 13, color: theme.textSecondary }}>No poll responses yet.</div>
         ) : (
-          <table style={theme.table}>
-            <thead>
-              <tr style={theme.tableHeadRow}>
-                <th style={theme.th}>Date</th>
-                <th style={theme.th}>Poll</th>
-                <th style={theme.th}>Answer</th>
-              </tr>
-            </thead>
-            <tbody>
-              {history.map((h) => (
-                <tr key={h.id} style={theme.tr}>
-                  <td style={theme.td}>{formatDate(h.poll?.date)}</td>
-                  <td style={theme.td}>{h.poll?.title || '—'}</td>
-                  <td style={theme.td}>{h.answer === 'yes' ? 'Coming' : 'Not coming'}</td>
+          <>
+            <table style={theme.table}>
+              <thead>
+                <tr style={theme.tableHeadRow}>
+                  <th style={theme.th}>Date</th>
+                  <th style={theme.th}>Poll</th>
+                  <th style={theme.th}>Answer</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {history.map((h) => (
+                  <tr key={h.id} style={theme.tr}>
+                    <td style={theme.td}>{formatDate(h.poll?.date)}</td>
+                    <td style={theme.td}>{h.poll?.title || '—'}</td>
+                    <td style={theme.td}>{h.answer === 'yes' ? 'Coming' : 'Not coming'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <Pagination page={page} pageCount={pageCount} onChange={setPage} disabled={isFetching} />
+          </>
         )}
       </div>
     </>
