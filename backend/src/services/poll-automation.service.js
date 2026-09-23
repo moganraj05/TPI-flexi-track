@@ -4,14 +4,19 @@ const { getStartOfDay } = require('../utils/date');
 const {
   isValidShiftTime,
   getPollWindow,
-  formatShiftLabel,
 } = require('../utils/shift');
+const { formatShiftName } = require('../config/shiftCatalog');
 const { notifyShiftWorkers } = require('./notification.service');
 const { emitPollUpdate } = require('../realtime');
 const logger = require('../utils/logger');
 
 const openDelayMinutes = () => Number(process.env.POLL_OPEN_AFTER_SHIFT_MINUTES) || 30;
-const closeBeforeHours = () => Number(process.env.POLL_CLOSE_BEFORE_NEXT_SHIFT_HOURS) || 2;
+// Poll closes 1h before the shift's next occurrence starts by default (was
+// 2h) — tighter turnaround on attendance confirmation. Both catalog shift
+// families (8h general A/B/C, 12h contract D/E) have well over an hour of
+// slack against openDelayMinutes+closeBeforeHours, so this stays valid for
+// every shift; see backend/src/utils/shift.js's getPollWindow.
+const closeBeforeHours = () => Number(process.env.POLL_CLOSE_BEFORE_NEXT_SHIFT_HOURS) || 1;
 
 const matchingWorkersWhere = (departmentId, shiftStart, shiftEnd) => ({
   departmentId,
@@ -48,7 +53,7 @@ async function ensureShiftPoll({ departmentId, shiftStart, shiftEnd, now = new D
   if (workerCount === 0) return null;
 
   const pollDate = getStartOfDay(window.nextStart);
-  const shiftLabel = formatShiftLabel(shiftStart, shiftEnd);
+  const shiftLabel = formatShiftName(shiftStart, shiftEnd);
 
   const existing = await prisma.poll.findFirst({
     where: { departmentId, shiftStart, shiftEnd, date: pollDate },

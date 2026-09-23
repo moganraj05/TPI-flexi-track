@@ -1,7 +1,8 @@
 const prisma = require('../config/prisma');
 const { getPollTimeMessage, autoCloseExpiredPolls } = require('../utils/poll');
 const { ensurePollsForWorker } = require('../services/poll-automation.service');
-const { isCurrentlyOnShift, formatShiftLabel } = require('../utils/shift');
+const { isCurrentlyOnShift } = require('../utils/shift');
+const { formatShiftName } = require('../config/shiftCatalog');
 const { formatDept } = require('../utils/pollReport');
 const { parsePagination, buildMeta } = require('../utils/pagination');
 const { emitPollUpdate } = require('../realtime');
@@ -62,7 +63,7 @@ exports.getTodayPoll = async (req, res, next) => {
           : false;
       const shiftLabel =
         req.user.shiftStart && req.user.shiftEnd
-          ? formatShiftLabel(req.user.shiftStart, req.user.shiftEnd)
+          ? formatShiftName(req.user.shiftStart, req.user.shiftEnd)
           : null;
 
       return res.json({
@@ -70,7 +71,7 @@ exports.getTodayPoll = async (req, res, next) => {
         data: null,
         message: onShift
           ? 'You are currently on shift. Your next attendance poll opens 30 minutes after this shift ends.'
-          : 'No live attendance poll right now. Polls open 30 minutes after your shift ends and close 2 hours before the next shift.',
+          : 'No live attendance poll right now. Polls open 30 minutes after your shift ends and close 1 hour before the next shift.',
         meta: {
           shiftStart: req.user.shiftStart || null,
           shiftEnd: req.user.shiftEnd || null,
@@ -92,7 +93,7 @@ exports.getTodayPoll = async (req, res, next) => {
         shiftEnd: req.user.shiftEnd || null,
         shiftLabel:
           req.user.shiftStart && req.user.shiftEnd
-            ? formatShiftLabel(req.user.shiftStart, req.user.shiftEnd)
+            ? formatShiftName(req.user.shiftStart, req.user.shiftEnd)
             : null,
         onShift:
           req.user.shiftStart && req.user.shiftEnd

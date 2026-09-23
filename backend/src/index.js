@@ -5,6 +5,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const prisma = require('./config/prisma');
 const { corsOptions } = require('./config/cors');
+const { getShiftCatalog } = require('./config/shiftCatalog');
 const { apiLimiter } = require('./middleware/rateLimiters');
 const requestContext = require('./middleware/requestContext');
 const errorHandler = require('./middleware/errorHandler');
@@ -73,6 +74,14 @@ app.get('/api/health/ready', async (req, res) => {
     logger.error('health.not_ready', { error: error.message });
     res.status(503).json({ success: false, message: 'Not ready', data: { database: 'down' } });
   }
+});
+
+// Static reference data (the fixed 5-shift catalog) — unauthenticated like
+// /api/health since webfrontend, incharge mobile, and worker mobile all need
+// it and it carries nothing sensitive, so one public endpoint beats
+// registering the same read three times behind three different auth chains.
+app.get('/api/shifts', (req, res) => {
+  res.json({ success: true, data: getShiftCatalog() });
 });
 
 app.use('/api/auth', authRoutes);

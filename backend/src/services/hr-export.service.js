@@ -60,16 +60,24 @@ const styleBody = (cell, opts = {}) => {
   };
 };
 
-async function buildPollWorkbook(poll, summary) {
-  const workbook = new ExcelJS.Workbook();
-  workbook.creator = 'FlexiTrack HR';
-  workbook.created = new Date();
-  workbook.company = 'TPI';
-
-  const roster = workbook.addWorksheet('Attendance', {
+// Renders one roster worksheet into an already-created workbook — shared by
+// the single-poll export and the daily multi-shift export below, so the two
+// can never drift in styling. `poll`/`summary` are null when no poll exists
+// for that shift/date (the daily export's "no poll" tab): rather than
+// silently omitting the shift, the sheet still appears with a plain
+// explanatory row.
+function addRosterSheet(workbook, sheetName, poll, summary) {
+  const roster = workbook.addWorksheet(sheetName, {
     views: [{ state: 'frozen', ySplit: 1 }],
     pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
   });
+
+  if (!poll || !summary) {
+    roster.addRow(['No poll exists for this shift on this date.']);
+    roster.getCell('A1').font = { italic: true, color: { argb: 'FF64748B' }, name: 'Calibri', size: 11 };
+    roster.getColumn(1).width = 48;
+    return roster;
+  }
 
   const headers = [
     '#',
@@ -132,11 +140,41 @@ async function buildPollWorkbook(poll, summary) {
   ];
   roster.autoFilter = { from: 'A1', to: 'K1' };
 
+  return roster;
+}
+
+async function buildPollWorkbook(poll, summary) {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'FlexiTrack HR';
+  workbook.created = new Date();
+  workbook.company = 'TPI';
+  addRosterSheet(workbook, 'Attendance', poll, summary);
   return workbook;
 }
 
 async function buildPollExcelBuffer(poll, summary) {
   const workbook = await buildPollWorkbook(poll, summary);
+  return workbook.xlsx.writeBuffer();
+}
+
+// One workbook, one sheet per catalog shift, for a single plant+date — the
+// "download all 5 shifts for today" report. `shiftEntries` is
+// [{ catalogEntry, poll, summary }], poll/summary null where that shift
+// didn't run/wasn't created for the date. Sheet names carry the shift code
+// and open/closed/no-poll status (Excel tab names are plain text, capped at
+// 31 chars, hence putting status there rather than only in the roster body).
+async function buildDailyShiftsWorkbook(shiftEntries) {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'FlexiTrack HR';
+  workbook.created = new Date();
+  workbook.company = 'TPI';
+
+  shiftEntries.forEach(({ catalogEntry, poll, summary }) => {
+    const status = !poll ? 'No poll' : poll.status === 'open' ? 'Open' : 'Closed';
+    const sheetName = `${catalogEntry.code} - ${status}`.slice(0, 31);
+    addRosterSheet(workbook, sheetName, poll, summary);
+  });
+
   return workbook.xlsx.writeBuffer();
 }
 
@@ -330,4 +368,4 @@ async function buildPollPdfBuffer(poll, summary) {
   });
 }
 
-module.exports = { buildPollExcelBuffer, buildPollPdfBuffer, buildRangeExcelBuffer };
+module.exports = { buildPollExcelBuffer, buildPollPdfBuffer, buildRangeExcelBuffer, buildDailyShiftsWorkbook };

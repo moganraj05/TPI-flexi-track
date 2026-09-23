@@ -1,12 +1,14 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getDepartments, getPolls } from '../api/hr';
+import { getShiftCatalog } from '../api/shifts';
 import { theme, chipStyle, SUCCESS, DANGER, WARNING } from '../theme';
 import { CenteredSpinner } from '../components/common/Spinner';
 import { EmptyState } from '../components/common/EmptyState';
-import { FilterChips, plantFilterOptions } from '../components/common/FilterChips';
+import { plantFilterOptions } from '../components/common/FilterChips';
 import { PlantSelect } from '../components/common/PlantSelect';
+import { ShiftSelect } from '../components/common/ShiftSelect';
 import { Pagination } from '../components/common/Pagination';
 import { formatDate, shiftLabel } from '../utils/format';
 
@@ -15,26 +17,31 @@ const PAGE_SIZE = 10;
 export function Attendance() {
   const navigate = useNavigate();
   const [plantFilter, setPlantFilter] = useState('all');
-  // "all", or "HH:mm|HH:mm" — the pair is what the API filters on.
-  const [shiftFilter, setShiftFilter] = useState('all');
+  // '' means "all shifts"; otherwise one of the fixed catalog codes (A-E).
+  const [shiftCode, setShiftCode] = useState('');
   const [dateFilter, setDateFilter] = useState('');
   const [page, setPage] = useState(1);
-
-  const [shiftStart, shiftEnd] = shiftFilter === 'all' ? [undefined, undefined] : shiftFilter.split('|');
 
   const { data: departments } = useQuery({
     queryKey: ['hr-departments'],
     queryFn: getDepartments,
     staleTime: 5 * 60 * 1000,
   });
+  const { data: shiftCatalog } = useQuery({
+    queryKey: ['shift-catalog'],
+    queryFn: getShiftCatalog,
+    staleTime: Infinity,
+  });
+  const selectedShift = (shiftCatalog || []).find((s) => s.code === shiftCode);
+
   const { data, isLoading } = useQuery({
-    queryKey: ['hr-polls', 'closed', plantFilter, shiftFilter, dateFilter, page],
+    queryKey: ['hr-polls', 'closed', plantFilter, shiftCode, dateFilter, page],
     queryFn: () =>
       getPolls({
         status: 'closed',
         department: plantFilter === 'all' ? undefined : plantFilter,
-        shiftStart,
-        shiftEnd,
+        shiftStart: selectedShift?.shiftStart,
+        shiftEnd: selectedShift?.shiftEnd,
         date: dateFilter || undefined,
         page,
         limit: PAGE_SIZE,
@@ -46,27 +53,14 @@ export function Attendance() {
   const pageCount = data?.meta?.pageCount || 1;
   const total = data?.meta?.total ?? 0;
 
-  // Built from meta.shifts (a distinct query over the whole filtered set),
-  // not from the rows on this page.
-  const shiftOptions = useMemo(() => {
-    const shifts = data?.meta?.shifts || [];
-    return [
-      { value: 'all', label: 'All shifts' },
-      ...shifts.map((s) => ({
-        value: `${s.shiftStart}|${s.shiftEnd}`,
-        label: `${s.shiftStart}–${s.shiftEnd}`,
-      })),
-    ];
-  }, [data?.meta?.shifts]);
-
   const setPlant = (v) => {
     setPlantFilter(v);
-    setShiftFilter('all');
+    setShiftCode('');
     setDateFilter('');
     setPage(1);
   };
   const setShift = (v) => {
-    setShiftFilter(v);
+    setShiftCode(v);
     setPage(1);
   };
   const setDate = (v) => {
@@ -78,7 +72,14 @@ export function Attendance() {
     <>
       <div style={theme.filterRow}>
         <PlantSelect options={plantFilterOptions(departments)} value={plantFilter} onChange={setPlant} />
-        <FilterChips options={shiftOptions} value={shiftFilter} onChange={setShift} />
+        <ShiftSelect
+          shifts={shiftCatalog || []}
+          value={shiftCode}
+          onChange={setShift}
+          allowEmpty
+          emptyLabel="All shifts"
+          disabled={plantFilter === 'all'}
+        />
         <input type="date" value={dateFilter} onChange={(e) => setDate(e.target.value)} style={{ ...theme.input, width: 'auto', padding: '7px 10px' }} />
         {dateFilter && (
           <button onClick={() => setDate('')} style={theme.ghostBtn}>

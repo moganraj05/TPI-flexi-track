@@ -8,7 +8,7 @@ import { EmptyState } from '../components/common/EmptyState';
 import { Avatar } from '../components/common/Avatar';
 import { RosterRow } from '../components/common/RosterRow';
 import { Pagination } from '../components/common/Pagination';
-import { formatDate } from '../utils/format';
+import { formatDate, memberShiftLabel } from '../utils/format';
 
 const HISTORY_PAGE_SIZE = 10;
 
@@ -65,7 +65,7 @@ export function WorkerDetail() {
         </div>
         <Row label="Equipment" value={employee.equipment} />
         <Row label="Process" value={employee.process} />
-        <Row label="Shift" value={employee.shiftName ? `${employee.shiftName} · ${employee.shiftStart}–${employee.shiftEnd}` : `${employee.shiftStart}–${employee.shiftEnd}`} />
+        <Row label="Shift" value={memberShiftLabel(employee)} />
         <Row label="Phone" value={employee.phone} />
         <Row label="Email" value={employee.email} />
         <Row
@@ -93,7 +93,7 @@ export function WorkerDetail() {
           <div style={{ ...theme.sectionHeader, marginTop: 0, marginBottom: 10 }}>Reports to</div>
           <RosterRow
             name={incharge.name}
-            tag={incharge.shiftName ? `${incharge.shiftName} · ${incharge.shiftStart}–${incharge.shiftEnd}` : `${incharge.shiftStart}–${incharge.shiftEnd}`}
+            tag={memberShiftLabel(incharge)}
             onClick={() => navigate(`/app/workforce/incharge/${incharge.id}`)}
           />
         </div>

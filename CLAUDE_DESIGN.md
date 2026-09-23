@@ -54,7 +54,7 @@ backend/src/
 
 - **Department**: `name`, `code` (e.g. Production / PROD, Packing / PACK).
 - **User**: `employeeId`, `name`, `email`, `phone`, `role`, `department`, `shiftStart`/`shiftEnd`, `pushToken`, `isActive`.
-- **Poll**: belongs to a department + shift, has `opensAt`/`closesAt` (auto-computed: opens 30 min after shift ends, closes 2 hours before the next shift starts), `status`: `open` | `closed`.
+- **Poll**: belongs to a department + shift, has `opensAt`/`closesAt` (auto-computed: opens 30 min after shift ends, closes 1 hour before the next shift starts), `status`: `open` | `closed`.
 - **Response**: one per (poll, user), `answer`: `yes` | `no`.
 - **FollowUp**: HR's manual tracking of a non-responder, `status`: `pending` | `contacted` | `confirmed_coming` | `confirmed_not_coming`, with a free-text `note`.
 

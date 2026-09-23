@@ -8,24 +8,18 @@ const {
   formatDept,
 } = require('../utils/pollReport');
 const { parsePagination, buildMeta } = require('../utils/pagination');
-const { buildPollExcelBuffer, buildPollPdfBuffer, buildRangeExcelBuffer } = require('../services/hr-export.service');
-const { isValidShiftTime, DEFAULT_SHIFT_START, DEFAULT_SHIFT_END } = require('../utils/shift');
+const {
+  buildPollExcelBuffer,
+  buildPollPdfBuffer,
+  buildRangeExcelBuffer,
+  buildDailyShiftsWorkbook,
+} = require('../services/hr-export.service');
+const { DEFAULT_SHIFT_START, DEFAULT_SHIFT_END } = require('../utils/shift');
+const { resolveShift, getShiftByTimes, getShiftCatalog, getShiftByCode, formatShiftName } = require('../config/shiftCatalog');
+const { buildTeamBulkTemplate, parseTeamBulkFile } = require('../services/bulk-import.service');
 const { signToken } = require('../utils/jwt');
 const { comparePassword, hashPassword } = require('../utils/password');
 const { emitPollUpdate, emitFollowUpUpdate } = require('../realtime');
-
-const parseShiftTimes = (body, fallbackStart, fallbackEnd) => {
-  const shiftStart = body.shiftStart !== undefined ? String(body.shiftStart).trim() : fallbackStart;
-  const shiftEnd = body.shiftEnd !== undefined ? String(body.shiftEnd).trim() : fallbackEnd;
-
-  if (!isValidShiftTime(shiftStart) || !isValidShiftTime(shiftEnd)) {
-    return { error: 'Shift times must be in HH:mm format (e.g. 08:00)' };
-  }
-  if (shiftStart === shiftEnd) {
-    return { error: 'Shift start and end cannot be the same time' };
-  }
-  return { shiftStart, shiftEnd };
-};
 
 // Parses optional fromDate/toDate — same YYYY-MM-DD-only format and UTC
 // midnight convention the existing single `date` filter already uses (both
@@ -374,7 +368,15 @@ exports.getPolls = async (req, res, next) => {
         ...buildMeta(pagination, total),
         shifts: shiftGroups
           .filter((group) => group.shiftStart && group.shiftEnd)
-          .map((group) => ({ shiftStart: group.shiftStart, shiftEnd: group.shiftEnd })),
+          .map((group) => {
+            const entry = getShiftByTimes(group.shiftStart, group.shiftEnd);
+            return {
+              shiftStart: group.shiftStart,
+              shiftEnd: group.shiftEnd,
+              code: entry?.code || null,
+              label: formatShiftName(group.shiftStart, group.shiftEnd),
+            };
+          }),
       },
     });
   } catch (error) {
@@ -720,7 +722,7 @@ exports.createTeamMember = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Plant not found' });
     }
 
-    const shift = parseShiftTimes(req.body, DEFAULT_SHIFT_START, DEFAULT_SHIFT_END);
+    const shift = resolveShift(req.body, DEFAULT_SHIFT_START, DEFAULT_SHIFT_END);
     if (shift.error) {
       return res.status(400).json({ success: false, message: shift.error });
     }
@@ -756,7 +758,10 @@ exports.createTeamMember = async (req, res, next) => {
         process: role === 'worker' ? processField?.trim() || '' : '',
         shiftStart: shift.shiftStart,
         shiftEnd: shift.shiftEnd,
-        shiftName: shiftName?.trim() || '',
+        // A caller-supplied shiftName (legacy free-text path) wins if sent
+        // explicitly; otherwise the catalog's own name (e.g. "Shift A") when
+        // shiftCode/matching times resolved one, else blank.
+        shiftName: shiftName?.trim() || shift.shiftName || '',
       },
     });
 
@@ -806,8 +811,9 @@ exports.updateTeamMember = async (req, res, next) => {
       effectiveDepartmentId = dept.id;
     }
 
-    if (req.body.shiftStart !== undefined || req.body.shiftEnd !== undefined) {
-      const shift = parseShiftTimes(
+    let resolvedShiftName;
+    if (req.body.shiftCode !== undefined || req.body.shiftStart !== undefined || req.body.shiftEnd !== undefined) {
+      const shift = resolveShift(
         req.body,
         member.shiftStart || DEFAULT_SHIFT_START,
         member.shiftEnd || DEFAULT_SHIFT_END
@@ -817,8 +823,10 @@ exports.updateTeamMember = async (req, res, next) => {
       }
       data.shiftStart = shift.shiftStart;
       data.shiftEnd = shift.shiftEnd;
+      resolvedShiftName = shift.shiftName;
     }
     if (shiftName !== undefined) data.shiftName = shiftName?.trim() || '';
+    else if (resolvedShiftName !== undefined) data.shiftName = resolvedShiftName;
 
     if (member.role === 'worker') {
       if (equipment !== undefined) data.equipment = equipment?.trim() || '';
@@ -884,6 +892,143 @@ exports.deactivateTeamMember = async (req, res, next) => {
     await prisma.user.update({ where: { id: member.id }, data: { isActive: false, pushToken: null } });
 
     res.json({ success: true, message: `${member.role === 'worker' ? 'Worker' : 'Incharge'} deactivated` });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// The fillable spreadsheet a plant's HR downloads before a bulk import —
+// a real example row plus read-only lookup sheets for that plant's
+// incharges and the fixed shift codes, so nothing needed to fill it out
+// correctly has to be looked up elsewhere.
+exports.exportTeamBulkTemplate = async (req, res, next) => {
+  try {
+    const { department } = req.query;
+    const dept = department
+      ? await prisma.department.findUnique({ where: { id: department } })
+      : await prisma.department.findFirst({ where: { isActive: true } });
+    if (!dept) {
+      return res.status(400).json({ success: false, message: 'Plant not found' });
+    }
+
+    const incharges = await prisma.user.findMany({
+      where: { departmentId: dept.id, role: 'incharge', isActive: true },
+      select: { employeeId: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+
+    const buffer = await buildTeamBulkTemplate(dept, incharges);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="FlexiTrack_HR_BulkWorkers_${dept.code}.xlsx"`);
+    res.send(Buffer.from(buffer));
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Bulk-creates workers from an uploaded spreadsheet. Every row is validated
+// and inserted independently — one bad row (duplicate ID, unknown shift
+// code, unrecognized incharge) is reported and skipped rather than failing
+// the whole batch, since a HR user re-uploading a 50-row file to fix one
+// typo is worse UX than just telling them which row needs fixing.
+exports.importTeamBulk = async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'An Excel file is required' });
+    }
+
+    const dept = req.body.department
+      ? await prisma.department.findUnique({ where: { id: req.body.department } })
+      : null;
+    if (!dept) {
+      return res.status(400).json({ success: false, message: 'Plant not found' });
+    }
+
+    const { rows, error } = await parseTeamBulkFile(req.file.buffer);
+    if (error) {
+      return res.status(400).json({ success: false, message: error });
+    }
+    if (rows.length === 0) {
+      return res.status(400).json({ success: false, message: 'No data rows found in the uploaded file' });
+    }
+
+    const incharges = await prisma.user.findMany({
+      where: { departmentId: dept.id, role: 'incharge' },
+      select: { id: true, employeeId: true, name: true },
+    });
+    const inchargeByEmpId = new Map(incharges.map((i) => [i.employeeId.toUpperCase(), i]));
+    // A name -> 'AMBIGUOUS' sentinel when two incharges share a name, so a
+    // row that only gave a name (instead of the safer ID) fails loudly
+    // rather than silently picking whichever one happened to be first.
+    const inchargeByName = new Map();
+    incharges.forEach((i) => {
+      const key = i.name.trim().toLowerCase();
+      inchargeByName.set(key, inchargeByName.has(key) ? 'AMBIGUOUS' : i);
+    });
+
+    const seenIds = new Set();
+    let created = 0;
+    const errors = [];
+
+    for (const row of rows) {
+      try {
+        if (!row.employeeId) throw new Error('Employee ID is required');
+        if (!row.name) throw new Error('Name is required');
+        if (!row.password || row.password.length < 6) throw new Error('Password must be at least 6 characters');
+
+        const shift = getShiftByCode(row.shiftCode);
+        if (!shift) throw new Error(`Invalid shift code "${row.shiftCode || ''}" — use A, B, C, D or E`);
+
+        const normalizedId = row.employeeId.toUpperCase();
+        if (seenIds.has(normalizedId)) throw new Error('Duplicate Employee ID in this file');
+        seenIds.add(normalizedId);
+
+        const existing = await prisma.user.findUnique({ where: { employeeId: normalizedId } });
+        if (existing) throw new Error('Employee ID already exists');
+
+        let inchargeId = null;
+        if (row.inchargeId) {
+          const match = inchargeByEmpId.get(row.inchargeId.toUpperCase());
+          if (!match) throw new Error(`Incharge ID "${row.inchargeId}" not found in this plant`);
+          inchargeId = match.id;
+        } else if (row.inchargeName) {
+          const match = inchargeByName.get(row.inchargeName.toLowerCase());
+          if (!match) throw new Error(`Incharge name "${row.inchargeName}" not found in this plant`);
+          if (match === 'AMBIGUOUS') {
+            throw new Error(`Incharge name "${row.inchargeName}" matches more than one incharge — use Incharge ID instead`);
+          }
+          inchargeId = match.id;
+        }
+
+        await prisma.user.create({
+          data: {
+            employeeId: normalizedId,
+            name: row.name,
+            phone: row.phone || '',
+            email: row.email || null,
+            password: await hashPassword(row.password),
+            role: 'worker',
+            departmentId: dept.id,
+            inchargeId,
+            equipment: row.equipment || '',
+            process: row.process || '',
+            shiftStart: shift.shiftStart,
+            shiftEnd: shift.shiftEnd,
+            shiftName: shift.name,
+          },
+        });
+        created += 1;
+      } catch (err) {
+        const message = err.code === 'P2002' ? 'Duplicate value (employee ID or email already used)' : err.message;
+        errors.push({ row: row.rowNumber, employeeId: row.employeeId, message });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `${created} worker(s) created${errors.length ? `, ${errors.length} row(s) skipped` : ''}`,
+      data: { created, failed: errors.length, errors },
+    });
   } catch (error) {
     next(error);
   }
@@ -1093,6 +1238,49 @@ exports.exportManpowerExcel = async (req, res, next) => {
     const buffer = await buildRangeExcelBuffer(rows);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', 'attachment; filename="FlexiTrack_HR_Manpower_Plan.xlsx"');
+    res.send(Buffer.from(buffer));
+  } catch (error) {
+    next(error);
+  }
+};
+
+// One workbook, one tab per catalog shift (A-E), for a single plant+date —
+// so "download everything that ran today" is one file instead of chasing
+// down each shift's poll individually.
+exports.exportDailyShiftsExcel = async (req, res, next) => {
+  try {
+    const { date, department } = req.query;
+    if (!DATE_ONLY_RE.test(date || '')) {
+      return res.status(400).json({ success: false, message: 'date must be in YYYY-MM-DD format' });
+    }
+    const dept = department ? await prisma.department.findUnique({ where: { id: department } }) : null;
+    if (!dept) {
+      return res.status(400).json({ success: false, message: 'Plant not found' });
+    }
+
+    const dayDate = new Date(`${date}T00:00:00.000Z`);
+    const catalog = getShiftCatalog();
+    const polls = await prisma.poll.findMany({
+      where: {
+        departmentId: dept.id,
+        date: dayDate,
+        OR: catalog.map((s) => ({ shiftStart: s.shiftStart, shiftEnd: s.shiftEnd })),
+      },
+      include: pollInclude,
+    });
+    const pollByTimes = new Map(polls.map((p) => [`${p.shiftStart}|${p.shiftEnd}`, p]));
+
+    const shiftEntries = await Promise.all(
+      catalog.map(async (catalogEntry) => {
+        const poll = pollByTimes.get(`${catalogEntry.shiftStart}|${catalogEntry.shiftEnd}`) || null;
+        const summary = poll ? await getPollSummary(poll, poll.departmentId) : null;
+        return { catalogEntry, poll, summary };
+      })
+    );
+
+    const buffer = await buildDailyShiftsWorkbook(shiftEntries);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="FlexiTrack_HR_DailyShifts_${date}.xlsx"`);
     res.send(Buffer.from(buffer));
   } catch (error) {
     next(error);

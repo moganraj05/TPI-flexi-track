@@ -53,8 +53,38 @@ export const countdown = (targetIso) => {
   return `${hours}h ${minutes}m`;
 };
 
-export const shiftLabel = (poll) =>
-  poll?.shiftStart && poll?.shiftEnd ? `${poll.shiftStart}–${poll.shiftEnd}` : poll?.shift || 'Shift';
+// "08:00" -> "8:00 AM", "16:00" -> "4:00 PM", "00:00" -> "12:00 AM" — never
+// the 24h HH:mm the catalog stores internally. Always includes minutes
+// (never "8 AM") so this matches the backend's own formatShiftName exactly —
+// the same shift should never look different in two places.
+export const formatShiftTime12h = (hhmm) => {
+  if (!hhmm) return '';
+  const [h, m] = hhmm.split(':').map(Number);
+  const period = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(m).padStart(2, '0')} ${period}`;
+};
+
+// The backend now bakes a catalog-branded label ("Shift A · 08:00–16:00")
+// straight into poll.shift at poll-creation time — prefer that when present
+// (recognizable by the "·" separator) so this needs no catalog lookup of its
+// own; historical polls created before that change fall back to the old
+// bare-times construction.
+export const shiftLabel = (poll) => {
+  if (poll?.shift && poll.shift.includes('·')) return poll.shift;
+  return poll?.shiftStart && poll?.shiftEnd
+    ? `${formatShiftTime12h(poll.shiftStart)} – ${formatShiftTime12h(poll.shiftEnd)}`
+    : poll?.shift || 'Shift';
+};
+
+// "Shift A · 8:00 AM – 4:00 PM" for a worker/incharge record (which carries
+// shiftName/shiftStart/shiftEnd as separate fields, unlike a poll's
+// already-baked `shift` string) — always 12h, never raw 24h HH:mm.
+export const memberShiftLabel = (member) => {
+  if (!member?.shiftStart || !member?.shiftEnd) return member?.shiftName || '—';
+  const times = `${formatShiftTime12h(member.shiftStart)} – ${formatShiftTime12h(member.shiftEnd)}`;
+  return member.shiftName ? `${member.shiftName} · ${times}` : times;
+};
 
 export const secondsAgo = (timestamp) => {
   if (!timestamp) return null;

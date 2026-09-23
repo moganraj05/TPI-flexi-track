@@ -49,6 +49,13 @@ const errorHandler = (err, req, res, next) => {
     return fail(403, 'Origin not allowed');
   }
 
+  // multer (file upload) rejections — wrong file type from its fileFilter,
+  // or a real MulterError like LIMIT_FILE_SIZE. Both carry a message that's
+  // already safe to show as-is.
+  if (err.name === 'MulterError' || err.message === 'Only .xlsx Excel files are supported') {
+    return fail(400, err.message);
+  }
+
   const status = err.status || err.statusCode || 500;
   const isUnexpectedServerError = status >= 500;
 

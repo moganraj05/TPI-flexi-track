@@ -190,6 +190,20 @@ a {
   }
 }
 
+/* Login page's inputs specifically (not applied app-wide, to avoid
+   reflowing every other form's inputs) — a soft focus glow instead of the
+   plain hard outline, closer to the rest of the app's rounded, elevated
+   feel. Hex values duplicated from tokens.js's accent, same convention as
+   :focus-visible above. */
+.ft-login-input {
+  transition: border-color 140ms ease-out, box-shadow 140ms ease-out;
+}
+.ft-login-input:focus {
+  outline: none;
+  border-color: #264653;
+  box-shadow: 0 0 0 4px rgba(38, 70, 83, 0.12);
+}
+
 .ft-skeleton {
   background: linear-gradient(90deg, #cadee7 25%, #dbe9ef 37%, #cadee7 63%);
   background-size: 400% 100%;

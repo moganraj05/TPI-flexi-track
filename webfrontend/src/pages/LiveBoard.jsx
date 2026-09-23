@@ -2,11 +2,13 @@ import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { getDepartments, getLiveBoard, markAttendance } from '../api/hr';
+import { getShiftCatalog } from '../api/shifts';
 import { theme, chipStyle, SUCCESS, SUCCESS_SOFT, DANGER, WARNING, WARNING_SOFT } from '../theme';
 import { spacing, radius, elevation } from '../tokens';
 import { EmptyState } from '../components/common/EmptyState';
 import { plantFilterOptions } from '../components/common/FilterChips';
 import { PlantSelect } from '../components/common/PlantSelect';
+import { ShiftSelect } from '../components/common/ShiftSelect';
 import { ProgressBar } from '../components/common/ProgressBar';
 import { Avatar } from '../components/common/Avatar';
 import { NameLinkButton } from '../components/common/NameLinkButton';
@@ -17,7 +19,7 @@ import { Pagination } from '../components/common/Pagination';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { SkeletonCard, SkeletonText } from '../components/common/Skeleton';
 import { usePagination } from '../utils/usePagination';
-import { countdown, shiftLabel } from '../utils/format';
+import { countdown, formatDate, shiftLabel } from '../utils/format';
 import { useLiveStatus } from '../context/LiveStatusContext';
 import { useToast } from '../context/ToastContext';
 
@@ -40,6 +42,8 @@ export function LiveBoard() {
   const toast = useToast();
   const { setLastUpdated } = useLiveStatus();
   const [plantFilter, setPlantFilter] = useState('all');
+  // '' means "all shifts"; otherwise one of the fixed catalog codes (A-E).
+  const [shiftCode, setShiftCode] = useState('');
   const [selectedPollId, setSelectedPollId] = useState(null);
   // { poll, person, answer } — the pending worker awaiting a manual mark, or
   // null when no confirmation is open.
@@ -50,6 +54,12 @@ export function LiveBoard() {
     queryFn: getDepartments,
     staleTime: 5 * 60 * 1000,
   });
+  const { data: shiftCatalog } = useQuery({
+    queryKey: ['shift-catalog'],
+    queryFn: getShiftCatalog,
+    staleTime: Infinity,
+  });
+  const selectedShift = (shiftCatalog || []).find((s) => s.code === shiftCode);
   const { data, isLoading, isFetching, isError, error, dataUpdatedAt, refetch } = useQuery({
     queryKey: ['hr-live'],
     queryFn: getLiveBoard,
@@ -64,7 +74,11 @@ export function LiveBoard() {
     if (dataUpdatedAt) setLastUpdated(dataUpdatedAt);
   }, [dataUpdatedAt, setLastUpdated]);
 
-  const polls = (data?.polls || []).filter((p) => plantFilter === 'all' || p.department?.id === plantFilter);
+  const polls = (data?.polls || []).filter(
+    (p) =>
+      (plantFilter === 'all' || p.department?.id === plantFilter) &&
+      (!selectedShift || (p.shiftStart === selectedShift.shiftStart && p.shiftEnd === selectedShift.shiftEnd))
+  );
 
   // Keeps the focused poll valid as the plant filter changes or a poll
   // closes mid-session via the same realtime refresh that already drives
@@ -100,6 +114,11 @@ export function LiveBoard() {
 
   const selectedPoll = polls.find((p) => p.id === selectedPollId) || null;
 
+  const setPlant = (v) => {
+    setPlantFilter(v);
+    setShiftCode('');
+  };
+
   return (
     <div style={page.wrap}>
       <LiveBoardHeader
@@ -108,7 +127,10 @@ export function LiveBoard() {
         onRefresh={refetch}
         departments={departments}
         plantFilter={plantFilter}
-        onPlantFilter={setPlantFilter}
+        onPlantFilter={setPlant}
+        shiftCatalog={shiftCatalog}
+        shiftCode={shiftCode}
+        onShiftFilter={setShiftCode}
       />
 
       {markTarget && (
@@ -129,7 +151,7 @@ export function LiveBoard() {
         <EmptyState
           icon="✓"
           title="No live polls right now"
-          message="Live polls appear here 30 minutes after a shift ends, and close 2 hours before the next one starts."
+          message="Live polls appear here 30 minutes after a shift ends, and close 1 hour before the next one starts."
         />
       ) : (
         <>
@@ -153,7 +175,17 @@ export function LiveBoard() {
   );
 }
 
-function LiveBoardHeader({ pollCount, isFetching, onRefresh, departments, plantFilter, onPlantFilter }) {
+function LiveBoardHeader({
+  pollCount,
+  isFetching,
+  onRefresh,
+  departments,
+  plantFilter,
+  onPlantFilter,
+  shiftCatalog,
+  shiftCode,
+  onShiftFilter,
+}) {
   return (
     <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
       <div>
@@ -185,6 +217,14 @@ function LiveBoardHeader({ pollCount, isFetching, onRefresh, departments, plantF
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <PlantSelect options={plantFilterOptions(departments)} value={plantFilter} onChange={onPlantFilter} />
+        <ShiftSelect
+          shifts={shiftCatalog || []}
+          value={shiftCode}
+          onChange={onShiftFilter}
+          allowEmpty
+          emptyLabel="All shifts"
+          disabled={plantFilter === 'all'}
+        />
         <Button variant="secondary" size="sm" onClick={() => onRefresh()} loading={isFetching} loadingLabel="Refreshing…">
           Refresh
         </Button>
@@ -218,7 +258,7 @@ function PollSelector({ polls, selectedId, onSelect }) {
             }}
           >
             <span style={chipStyle(poll.department?.code)}>{poll.department?.code}</span>
-            {shiftLabel(poll)}
+            {formatDate(poll.date)}
           </button>
         );
       })}

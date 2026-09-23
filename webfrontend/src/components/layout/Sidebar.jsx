@@ -1,6 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import { theme, navButtonStyle } from '../../theme';
-import { useAuth } from '../../context/AuthContext';
+import brandMark from '../../assets/brand-mark.svg';
 
 const NAV = [
   { to: '/app/dashboard', label: 'Dashboard' },
@@ -12,12 +12,11 @@ const NAV = [
 ];
 
 export function Sidebar() {
-  const { logout } = useAuth();
-
   return (
-    <aside style={theme.sidebar}>
+    <aside style={{ ...theme.sidebar, position: 'relative', overflow: 'hidden' }}>
+      <img src={brandMark} alt="" style={theme.sidebarWatermark} aria-hidden="true" />
       <div style={theme.sidebarBrandRow}>
-        <div style={theme.loginMark}>FT</div>
+        <img src={brandMark} alt="" style={theme.loginMark} />
         <div>
           <div style={{ fontWeight: 800, fontSize: 16, color: theme.sidebarBrandColor }}>FlexiTrack</div>
           <div style={{ fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', color: theme.sidebarMuted }}>
@@ -37,9 +36,6 @@ export function Sidebar() {
           </NavLink>
         ))}
       </nav>
-      <button onClick={logout} style={theme.sidebarLogout}>
-        Log out
-      </button>
     </aside>
   );
 }

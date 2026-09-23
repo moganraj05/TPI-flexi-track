@@ -5,12 +5,8 @@ const { hashPassword } = require('../utils/password');
 const { formatDept } = require('../utils/pollReport');
 const { parsePagination, buildMeta } = require('../utils/pagination');
 const { emitPollUpdate } = require('../realtime');
-const {
-  isValidShiftTime,
-  formatShiftLabel,
-  DEFAULT_SHIFT_START,
-  DEFAULT_SHIFT_END,
-} = require('../utils/shift');
+const { DEFAULT_SHIFT_START, DEFAULT_SHIFT_END } = require('../utils/shift');
+const { resolveShift, formatShiftName } = require('../config/shiftCatalog');
 
 const pollInclude = {
   department: true,
@@ -39,19 +35,6 @@ const formatPoll = (poll) => ({
   createdAt: poll.createdAt,
 });
 
-const parseShiftTimes = (body, fallbackStart, fallbackEnd) => {
-  const shiftStart = body.shiftStart !== undefined ? String(body.shiftStart).trim() : fallbackStart;
-  const shiftEnd = body.shiftEnd !== undefined ? String(body.shiftEnd).trim() : fallbackEnd;
-
-  if (!isValidShiftTime(shiftStart) || !isValidShiftTime(shiftEnd)) {
-    return { error: 'Shift times must be in HH:mm format (e.g. 08:00)' };
-  }
-  if (shiftStart === shiftEnd) {
-    return { error: 'Shift start and end cannot be the same time' };
-  }
-  return { shiftStart, shiftEnd };
-};
-
 const formatTeamWorker = (worker, livePoll = null, liveAnswer = null) => ({
   id: worker.id,
   name: worker.name,
@@ -59,7 +42,7 @@ const formatTeamWorker = (worker, livePoll = null, liveAnswer = null) => ({
   phone: worker.phone || '',
   shiftStart: worker.shiftStart || DEFAULT_SHIFT_START,
   shiftEnd: worker.shiftEnd || DEFAULT_SHIFT_END,
-  shiftLabel: formatShiftLabel(
+  shiftLabel: formatShiftName(
     worker.shiftStart || DEFAULT_SHIFT_START,
     worker.shiftEnd || DEFAULT_SHIFT_END
   ),
@@ -336,7 +319,7 @@ exports.createTeamWorker = async (req, res, next) => {
       });
     }
 
-    const shift = parseShiftTimes(req.body, DEFAULT_SHIFT_START, DEFAULT_SHIFT_END);
+    const shift = resolveShift(req.body, DEFAULT_SHIFT_START, DEFAULT_SHIFT_END);
     if (shift.error) {
       return res.status(400).json({ success: false, message: shift.error });
     }
@@ -357,6 +340,7 @@ exports.createTeamWorker = async (req, res, next) => {
         departmentId: getDeptId(req.user),
         shiftStart: shift.shiftStart,
         shiftEnd: shift.shiftEnd,
+        shiftName: shift.shiftName || '',
       },
       select: teamWorkerSelect,
     });
@@ -393,8 +377,8 @@ exports.updateTeamWorker = async (req, res, next) => {
       data.phone = phone?.trim() || '';
     }
 
-    if (req.body.shiftStart !== undefined || req.body.shiftEnd !== undefined) {
-      const shift = parseShiftTimes(
+    if (req.body.shiftCode !== undefined || req.body.shiftStart !== undefined || req.body.shiftEnd !== undefined) {
+      const shift = resolveShift(
         req.body,
         worker.shiftStart || DEFAULT_SHIFT_START,
         worker.shiftEnd || DEFAULT_SHIFT_END
@@ -404,6 +388,7 @@ exports.updateTeamWorker = async (req, res, next) => {
       }
       data.shiftStart = shift.shiftStart;
       data.shiftEnd = shift.shiftEnd;
+      if (shift.shiftName) data.shiftName = shift.shiftName;
     }
 
     if (password) {

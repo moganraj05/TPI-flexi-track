@@ -1,13 +1,23 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { getDepartments, getWorkforce, createTeamMember, updateTeamMember, deactivateTeamMember } from '../api/hr';
+import {
+  getDepartments,
+  getWorkforce,
+  createTeamMember,
+  updateTeamMember,
+  deactivateTeamMember,
+  downloadTeamBulkTemplate,
+  importTeamBulk,
+} from '../api/hr';
+import { getShiftCatalog } from '../api/shifts';
 import { theme, chipStyle, SUCCESS } from '../theme';
 import { spacing, radius, elevation } from '../tokens';
 import { CenteredSpinner } from '../components/common/Spinner';
 import { EmptyState } from '../components/common/EmptyState';
 import { FilterChips, plantFilterOptions } from '../components/common/FilterChips';
 import { PlantSelect } from '../components/common/PlantSelect';
+import { ShiftSelect } from '../components/common/ShiftSelect';
 import { NameLinkButton } from '../components/common/NameLinkButton';
 import { Avatar } from '../components/common/Avatar';
 import { Badge } from '../components/common/Badge';
@@ -16,6 +26,7 @@ import { Table, TableHead, Th, TableRow, Td } from '../components/common/Table';
 import { SkeletonTableRows } from '../components/common/Skeleton';
 import { Pagination } from '../components/common/Pagination';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
+import { memberShiftLabel } from '../utils/format';
 import { useToast } from '../context/ToastContext';
 
 const GROUP_PAGE_SIZE = 8;
@@ -251,6 +262,8 @@ function MemberFormPanel({ target, departments, onCancel, onSaved }) {
   const isEdit = target.mode === 'edit';
   const member = target.member;
   const role = isEdit ? member.role : target.role;
+  const canBulkUpload = !isEdit && role === 'worker';
+  const [addMode, setAddMode] = useState('single');
 
   const [employeeId, setEmployeeId] = useState(isEdit ? member.employeeId : '');
   const [name, setName] = useState(isEdit ? member.name : '');
@@ -258,14 +271,27 @@ function MemberFormPanel({ target, departments, onCancel, onSaved }) {
   const [phone, setPhone] = useState(isEdit ? member.phone || '' : '');
   const [email, setEmail] = useState(isEdit ? member.email || '' : '');
   const [department, setDepartment] = useState(isEdit ? member.department?.id : target.department);
-  const [shiftName, setShiftName] = useState(isEdit ? member.shiftName || '' : '');
-  const [shiftStart, setShiftStart] = useState(isEdit ? member.shiftStart || '08:00' : '08:00');
-  const [shiftEnd, setShiftEnd] = useState(isEdit ? member.shiftEnd || '20:00' : '20:00');
   const [equipment, setEquipment] = useState(isEdit ? member.equipment || '' : '');
   const [processField, setProcessField] = useState(isEdit ? member.process || '' : '');
   const [incharge, setIncharge] = useState(isEdit ? member.incharge?.id || '' : '');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+
+  const { data: shiftCatalog } = useQuery({
+    queryKey: ['shift-catalog'],
+    queryFn: getShiftCatalog,
+    staleTime: Infinity,
+  });
+  const [shiftCode, setShiftCode] = useState('');
+  // Seed the picker from the member's current shift once the catalog has
+  // loaded — can't be a plain useState initializer since the catalog query
+  // is still pending on first render.
+  useEffect(() => {
+    if (!isEdit || !shiftCatalog || shiftCode) return;
+    const match = shiftCatalog.find((s) => s.shiftStart === member.shiftStart && s.shiftEnd === member.shiftEnd);
+    if (match) setShiftCode(match.code);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shiftCatalog]);
 
   // Only the incharges of the plant currently selected in the form, fetched
   // on demand — this used to be derived from a full workforce list held in
@@ -283,6 +309,7 @@ function MemberFormPanel({ target, departments, onCancel, onSaved }) {
 
     if (!name.trim()) return setError('Name is required');
     if (!department) return setError('Plant is required');
+    if (!shiftCode) return setError('Shift is required');
     if (!isEdit && !employeeId.trim()) return setError('Employee ID is required');
     if (!isEdit && !password) return setError('Password is required');
     if (password && password.length < 6) return setError('Password must be at least 6 characters');
@@ -294,9 +321,7 @@ function MemberFormPanel({ target, departments, onCancel, onSaved }) {
         phone,
         email,
         department,
-        shiftStart,
-        shiftEnd,
-        shiftName,
+        shiftCode,
         ...(role === 'worker' ? { equipment, process: processField, incharge: incharge || null } : {}),
         ...(password ? { password } : {}),
       };
@@ -316,9 +341,24 @@ function MemberFormPanel({ target, departments, onCancel, onSaved }) {
 
   return (
     <div style={{ background: theme.surface, border: `1px solid ${theme.borderColor}`, borderRadius: radius.lg, padding: spacing.lg, boxShadow: elevation.card }}>
-      <div style={{ fontWeight: 800, fontSize: 16, color: theme.textPrimary, marginBottom: 14 }}>
-        {isEdit ? `Edit ${role}` : `Add ${role}`}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+        <div style={{ fontWeight: 800, fontSize: 16, color: theme.textPrimary }}>
+          {isEdit ? `Edit ${role}` : `Add ${role}`}
+        </div>
+        {canBulkUpload && (
+          <FilterChips
+            options={[
+              { value: 'single', label: 'Single' },
+              { value: 'bulk', label: 'Bulk upload' },
+            ]}
+            value={addMode}
+            onChange={setAddMode}
+          />
+        )}
       </div>
+      {canBulkUpload && addMode === 'bulk' ? (
+        <BulkUploadForm departments={departments} defaultDepartment={department} onCancel={onCancel} onDone={onSaved} />
+      ) : (
       <form onSubmit={handleSubmit}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0 16px' }}>
           <div>
@@ -355,16 +395,10 @@ function MemberFormPanel({ target, departments, onCancel, onSaved }) {
             </select>
           </div>
           <div>
-            <label style={theme.label}>Shift name</label>
-            <input value={shiftName} onChange={(e) => setShiftName(e.target.value)} style={theme.input} placeholder="e.g. Shift A" />
-          </div>
-          <div>
-            <label style={theme.label}>Shift start</label>
-            <input type="time" value={shiftStart} onChange={(e) => setShiftStart(e.target.value)} style={theme.input} />
-          </div>
-          <div>
-            <label style={theme.label}>Shift end</label>
-            <input type="time" value={shiftEnd} onChange={(e) => setShiftEnd(e.target.value)} style={theme.input} />
+            <label style={theme.label}>Shift</label>
+            <div>
+              <ShiftSelect shifts={shiftCatalog || []} value={shiftCode} onChange={setShiftCode} allowEmpty emptyLabel="Select a shift" />
+            </div>
           </div>
           {role === 'worker' && (
             <>
@@ -397,6 +431,145 @@ function MemberFormPanel({ target, departments, onCancel, onSaved }) {
           </Button>
           <Button type="button" variant="secondary" onClick={onCancel} disabled={saving}>
             Cancel
+          </Button>
+        </div>
+      </form>
+      )}
+    </div>
+  );
+}
+
+// The "Bulk upload" tab of the Add worker panel: download a fillable
+// template scoped to the selected plant (real example row + read-only
+// incharge/shift-code reference sheets), then upload the filled copy. Every
+// row is validated and inserted independently server-side, so a partial
+// success (some rows created, some skipped with a reason) is the normal,
+// expected outcome here — not an error state.
+function BulkUploadForm({ departments, defaultDepartment, onCancel, onDone }) {
+  const [department, setDepartment] = useState(defaultDepartment || departments[0]?.id || '');
+  const [file, setFile] = useState(null);
+  const [downloading, setDownloading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState('');
+  const [result, setResult] = useState(null);
+
+  const handleDownload = async () => {
+    if (!department) return setError('Select a plant first');
+    setError('');
+    setDownloading(true);
+    try {
+      await downloadTeamBulkTemplate(department);
+    } catch (err) {
+      setError(err.message || 'Could not download the template');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const handleUpload = async (e) => {
+    e.preventDefault();
+    if (!department) return setError('Select a plant first');
+    if (!file) return setError('Choose the filled-in Excel file to upload');
+    setError('');
+    setResult(null);
+    setUploading(true);
+    try {
+      const data = await importTeamBulk({ department, file });
+      setResult(data);
+      setFile(null);
+      if (data.created > 0) onDone();
+    } catch (err) {
+      setError(err.message || 'Import failed');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0 16px' }}>
+        <div>
+          <label style={theme.label}>Plant</label>
+          <select value={department} onChange={(e) => setDepartment(e.target.value)} style={theme.input}>
+            <option value="" disabled>
+              Select a plant
+            </option>
+            {departments.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name} ({d.code})
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 16, padding: spacing.base, background: theme.borderColor + '22', borderRadius: radius.md }}>
+        <div style={{ fontWeight: 700, fontSize: 13.5, color: theme.textPrimary, marginBottom: 4 }}>1. Get the template</div>
+        <div style={{ fontSize: 12.5, color: theme.textSecondary, marginBottom: 10 }}>
+          One example row already filled in, plus this plant's incharges (name + ID) and the fixed shift codes on their
+          own reference sheets — so everything needed to fill it out correctly is right there in the file.
+        </div>
+        <Button type="button" variant="secondary" onClick={handleDownload} loading={downloading} loadingLabel="Preparing…" disabled={!department}>
+          Download sample Excel
+        </Button>
+      </div>
+
+      <form onSubmit={handleUpload}>
+        <div style={{ marginTop: 12, padding: spacing.base, background: theme.borderColor + '22', borderRadius: radius.md }}>
+          <div style={{ fontWeight: 700, fontSize: 13.5, color: theme.textPrimary, marginBottom: 4 }}>2. Upload the filled file</div>
+          <div style={{ fontSize: 12.5, color: theme.textSecondary, marginBottom: 10 }}>
+            Each row is added independently — if a few rows have an issue (duplicate ID, unknown shift code, unrecognized
+            incharge), the rest still go through and you'll see exactly which rows to fix.
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <input
+              type="file"
+              accept=".xlsx"
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+              style={{ ...theme.input, padding: 6 }}
+            />
+            <Button type="submit" variant="primary" loading={uploading} loadingLabel="Uploading…" disabled={!file}>
+              Upload
+            </Button>
+          </div>
+        </div>
+
+        {error && <div style={theme.errorText}>{error}</div>}
+
+        {result && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontWeight: 700, fontSize: 13.5, color: theme.textPrimary }}>
+              {result.created} worker{result.created === 1 ? '' : 's'} created
+              {result.failed > 0 ? `, ${result.failed} row${result.failed === 1 ? '' : 's'} skipped` : ''}
+            </div>
+            {result.errors.length > 0 && (
+              <div style={{ marginTop: 8, ...theme.card, padding: 0, overflow: 'hidden' }}>
+                <table style={theme.table}>
+                  <thead>
+                    <tr style={theme.tableHeadRow}>
+                      <th style={theme.th}>Row</th>
+                      <th style={theme.th}>Employee ID</th>
+                      <th style={theme.th}>Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.errors.map((e) => (
+                      <tr key={e.row} style={theme.tr}>
+                        <td style={theme.td}>{e.row}</td>
+                        <td style={theme.td}>{e.employeeId || '—'}</td>
+                        <td style={{ ...theme.td, color: theme.textSecondary }}>{e.message}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+          <Button type="button" variant="secondary" onClick={onCancel}>
+            {result ? 'Done' : 'Cancel'}
           </Button>
         </div>
       </form>
@@ -485,7 +658,7 @@ function WorkerGroup({ dept, statusFilter, onOpenWorker, onOpenIncharge, onEdit,
                       </Td>
                       <Td>
                         <span style={{ fontSize: 13, color: w.isActive ? theme.textSecondary : theme.mutedColor }}>
-                          {w.shiftName || (w.shiftStart && w.shiftEnd ? `${w.shiftStart}–${w.shiftEnd}` : '—')}
+                          {memberShiftLabel(w)}
                         </span>
                       </Td>
                       <Td>
@@ -572,7 +745,7 @@ function InchargeGroup({ dept, statusFilter, onOpenIncharge, onEdit, onDeactivat
                       </Td>
                       <Td>
                         <span style={{ fontSize: 13, color: i.isActive ? theme.textSecondary : theme.mutedColor }}>
-                          {i.shiftName ? `${i.shiftName} · ${i.shiftStart}–${i.shiftEnd}` : `${i.shiftStart}–${i.shiftEnd}`}
+                          {memberShiftLabel(i)}
                         </span>
                       </Td>
                       <Td>

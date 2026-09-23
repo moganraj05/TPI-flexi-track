@@ -97,10 +97,73 @@ export const theme = {
   accent: PAL.accent, mutedColor: PAL.textSecondary, borderColor: PAL.border,
   textPrimary: PAL.textPrimary, textSecondary: PAL.textSecondary, surface: PAL.surface, bg: PAL.bg,
 
-  loginPage: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: PAL.bg, fontFamily: FONT, padding: 20 },
-  loginCard: { width: '100%', maxWidth: 380, background: PAL.surface, border: `1px solid ${PAL.border}`, borderRadius: 16, padding: 32, boxShadow: elevation.card },
-  loginBrandRow: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 22 },
-  loginMark: { width: 34, height: 34, borderRadius: 9, background: PAL.accent, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 14, flexShrink: 0 },
+  loginPage: { minHeight: '100vh', display: 'flex', fontFamily: FONT },
+  // A photo-free stand-in for the split "industrial photo + glass panel"
+  // reference look — a dark gradient built from the app's own sidebar/accent
+  // tones (not a new color) so the login page still reads as FlexiTrack, not
+  // a different product bolted on the front. The radial glow is a second,
+  // off-center light source (accentSoft, heavily faded) layered under the
+  // linear gradient — flat two-stop gradients read flat/dated, this gives
+  // the panel actual depth without adding a real photo.
+  loginLeftPanel: {
+    flex: '1 1 50%',
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'center',
+    padding: '56px 64px',
+    position: 'relative',
+    overflow: 'hidden',
+    backgroundImage: `radial-gradient(circle at 15% 15%, ${PAL.accentSoft}33 0%, transparent 45%), linear-gradient(160deg, ${PAL.sidebarBg} 0%, ${PAL.accent} 100%)`,
+    color: '#ffffff',
+  },
+  // Large, faint, decorative — the "brand watermark" treatment reused on the
+  // sidebar (see sidebarWatermark below), sized up for the bigger panel.
+  loginWatermark: { position: 'absolute', width: 560, height: 560, right: -140, bottom: -170, opacity: 0.07, pointerEvents: 'none' },
+  // A soft blurred glow sitting directly behind the logo — the thing that
+  // makes a flat white mark on a dark panel read as "lit" rather than
+  // pasted on top.
+  loginLogoGlow: {
+    position: 'absolute',
+    width: 220,
+    height: 220,
+    left: 40,
+    top: 32,
+    borderRadius: '50%',
+    background: PAL.accentSoft,
+    opacity: 0.18,
+    filter: 'blur(40px)',
+    pointerEvents: 'none',
+  },
+  loginBadge: {
+    display: 'inline-flex',
+    alignSelf: 'flex-start',
+    alignItems: 'center',
+    gap: 6,
+    padding: '5px 12px',
+    borderRadius: 999,
+    border: '1px solid rgba(255,255,255,0.24)',
+    background: 'rgba(255,255,255,0.06)',
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: '0.12em',
+    textTransform: 'uppercase',
+    marginBottom: 20,
+  },
+  loginRightPanel: { flex: '1 1 50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: PAL.bg, padding: 20 },
+  loginCard: {
+    width: '100%',
+    maxWidth: 400,
+    background: PAL.surface,
+    borderRadius: 20,
+    padding: '40px 36px',
+    boxShadow: '0 24px 48px -12px rgba(8,14,17,0.18), 0 2px 6px rgba(8,14,17,0.06)',
+    borderTop: `4px solid ${PAL.accent}`,
+  },
+  loginMark: { width: 34, height: 34, flexShrink: 0 },
+  // Same mark, low-opacity, dropped into a dark surface elsewhere in the app
+  // (currently the sidebar) so the brand shows up as a subtle texture rather
+  // than a second loud logo competing with the nav.
+  sidebarWatermark: { position: 'absolute', width: 220, height: 220, left: -50, bottom: -40, opacity: 0.05, pointerEvents: 'none' },
   label: { display: 'block', fontSize: 12, fontWeight: 700, color: PAL.textSecondary, marginBottom: 6, marginTop: 14 },
   input: { width: '100%', padding: '11px 12px', borderRadius: 8, border: `1px solid ${PAL.border}`, fontSize: 14, fontFamily: FONT, color: PAL.textPrimary, background: PAL.bg, outline: 'none' },
   primaryBtn: { width: '100%', marginTop: 22, padding: '12px 16px', borderRadius: 8, border: 'none', background: PAL.accent, color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer', fontFamily: FONT },
@@ -112,7 +175,6 @@ export const theme = {
   sidebarBrandRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '0 8px 20px' },
   sidebarBrandColor: '#ffffff', sidebarMuted: PAL.sidebarMuted,
   navList: { display: 'flex', flexDirection: 'column', gap: 2, flex: 1 },
-  sidebarLogout: { marginTop: 12, padding: '10px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.14)', background: 'transparent', color: PAL.sidebarMuted, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: FONT, textAlign: 'left' },
   mainCol: { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, height: '100vh', overflow: 'hidden' },
   topbar: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 28px', borderBottom: `1px solid ${PAL.border}`, background: PAL.surface, flexShrink: 0 },
   liveRow: { display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 },

@@ -6,6 +6,7 @@ import { CenteredSpinner } from '../components/common/Spinner';
 import { EmptyState } from '../components/common/EmptyState';
 import { Avatar } from '../components/common/Avatar';
 import { NameLinkButton } from '../components/common/NameLinkButton';
+import { memberShiftLabel } from '../utils/format';
 
 export function InchargeDetail() {
   const { id } = useParams();
@@ -39,7 +40,7 @@ export function InchargeDetail() {
             </div>
           </div>
         </div>
-        <Row label="Shift" value={employee.shiftName ? `${employee.shiftName} · ${employee.shiftStart}–${employee.shiftEnd}` : `${employee.shiftStart}–${employee.shiftEnd}`} />
+        <Row label="Shift" value={memberShiftLabel(employee)} />
         <Row label="Phone" value={employee.phone} />
         <Row label="Email" value={employee.email} noBorder />
       </div>
@@ -70,7 +71,7 @@ export function InchargeDetail() {
                   <td style={theme.td}>
                     {w.equipment} · {w.process}
                   </td>
-                  <td style={theme.td}>{w.shiftStart && w.shiftEnd ? `${w.shiftStart}–${w.shiftEnd}` : '—'}</td>
+                  <td style={theme.td}>{memberShiftLabel(w)}</td>
                 </tr>
               ))}
             </tbody>

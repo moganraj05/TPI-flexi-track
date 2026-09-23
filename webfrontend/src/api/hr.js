@@ -129,6 +129,31 @@ export const deactivateTeamMember = async (id) => {
   return data;
 };
 
+// Blob download of the fillable bulk-add-workers template — a real example
+// row plus read-only "Incharges reference"/"Shift codes" sheets scoped to
+// the given plant, via the shared downloadBlob helper below.
+export const downloadTeamBulkTemplate = async (department) => {
+  const { data } = await client.get('/hr/team/bulk-template.xlsx', {
+    params: { department },
+    responseType: 'blob',
+  });
+  downloadBlob(data, 'FlexiTrack_HR_BulkWorkers_Template.xlsx');
+};
+
+// Uploads a filled-in bulk-add-workers spreadsheet. Returns { created,
+// failed, errors: [{row, employeeId, message}] } — every row is validated
+// and inserted independently server-side, so this always resolves (unless
+// the request itself fails), never throws for individual bad rows.
+export const importTeamBulk = async ({ department, file }) => {
+  const formData = new FormData();
+  formData.append('department', department);
+  formData.append('file', file);
+  const { data } = await client.post('/hr/team/bulk-import', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return data.data;
+};
+
 export const getHrAdmins = async () => {
   const { data } = await client.get('/hr/admins');
   return data.data;
@@ -180,4 +205,13 @@ export const downloadManpowerExcel = async ({ status = 'closed', fromDate, toDat
     responseType: 'blob',
   });
   downloadBlob(data, 'FlexiTrack_HR_Manpower_Plan.xlsx');
+};
+
+// One workbook, one tab per catalog shift, for a single plant+date.
+export const downloadDailyShiftsExcel = async ({ department, date }) => {
+  const { data } = await client.get('/hr/export/daily-shifts.xlsx', {
+    params: { department, date },
+    responseType: 'blob',
+  });
+  downloadBlob(data, `FlexiTrack_HR_DailyShifts_${date}.xlsx`);
 };

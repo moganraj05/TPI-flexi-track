@@ -8,12 +8,14 @@
 // two places with two different wordings would just create drift.
 const { z } = require('zod');
 const { isValidShiftTime } = require('../utils/shift');
+const { getShiftCatalog } = require('../config/shiftCatalog');
 
 const uuid = (label) => z.string().uuid(`Invalid ${label || 'ID'}`);
 const requiredString = (label) => z.string().trim().min(1, `${label} is required`);
 const password = () => z.string().min(6, 'Password must be at least 6 characters');
 const shiftTime = () =>
   z.string().refine(isValidShiftTime, 'Shift times must be in HH:mm format (e.g. 08:00)');
+const shiftCode = () => z.enum(getShiftCatalog().map((s) => s.code), { message: 'Invalid shift code' });
 const optionalUuidOrEmpty = (label) =>
   z.union([uuid(label), z.literal('')]).optional().nullable();
 
@@ -41,6 +43,7 @@ const createTeamWorkerBody = z.object({
   name: requiredString('Name'),
   phone: z.string().trim().optional(),
   password: password(),
+  shiftCode: shiftCode().optional(),
   shiftStart: shiftTime().optional(),
   shiftEnd: shiftTime().optional(),
 });
@@ -49,6 +52,7 @@ const updateTeamWorkerBody = z.object({
   name: z.string().trim().min(1, 'Name cannot be empty').optional(),
   phone: z.string().trim().optional(),
   password: password().optional(),
+  shiftCode: shiftCode().optional(),
   shiftStart: shiftTime().optional(),
   shiftEnd: shiftTime().optional(),
 });
@@ -88,6 +92,7 @@ const createTeamMemberBody = z.object({
   password: password(),
   role: z.string(),
   department: uuid('plant ID'),
+  shiftCode: shiftCode().optional(),
   shiftStart: shiftTime().optional(),
   shiftEnd: shiftTime().optional(),
   shiftName: z.string().trim().optional(),
@@ -102,6 +107,7 @@ const updateTeamMemberBody = z.object({
   email: z.union([z.string().trim().email('Invalid email'), z.literal('')]).optional().nullable(),
   password: password().optional(),
   department: uuid('plant ID').optional(),
+  shiftCode: shiftCode().optional(),
   shiftStart: shiftTime().optional(),
   shiftEnd: shiftTime().optional(),
   shiftName: z.string().trim().optional(),

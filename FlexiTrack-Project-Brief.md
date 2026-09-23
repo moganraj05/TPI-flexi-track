@@ -73,7 +73,7 @@ Each **worker** has **shift start** and **shift end** (HH:mm), e.g. EMP001 **08:
 Automation rules (defaults, env-configurable):
 
 - After a shift **ends**, wait **30 minutes**, then **open** a poll.
-- Poll **closes 2 hours before the next shift start**.
+- Poll **closes 1 hour before the next shift start**.
 
 Example (08:00–20:00):
 
@@ -183,7 +183,7 @@ Limits: physical Android device, FCM configured on Expo, backend reachable from 
 3. HR site: `cd hr-new && npm run dev` → http://localhost:5173
 4. Mobile: set PC LAN IP in `mobile/constants/theme.ts`, EAS preview APK or Expo as allowed; OTA channel `preview`.
 
-JWT: `JWT_EXPIRES_IN=365d`. Poll timing env: `POLL_OPEN_AFTER_SHIFT_MINUTES=30`, `POLL_CLOSE_BEFORE_NEXT_SHIFT_HOURS=2`.
+JWT: `JWT_EXPIRES_IN=365d`. Poll timing env: `POLL_OPEN_AFTER_SHIFT_MINUTES=30`, `POLL_CLOSE_BEFORE_NEXT_SHIFT_HOURS=1`.
 
 **HR website deployment (requirements only)**
 

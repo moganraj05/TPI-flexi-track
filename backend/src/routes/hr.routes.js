@@ -2,6 +2,7 @@ const express = require('express');
 const { authenticate, authorize } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { loginLimiter, sensitiveLimiter } = require('../middleware/rateLimiters');
+const { excelUpload } = require('../middleware/upload');
 const {
   hrLoginBody,
   changePasswordBody,
@@ -46,6 +47,9 @@ const {
   exportPollExcel,
   exportPollPdf,
   exportManpowerExcel,
+  exportDailyShiftsExcel,
+  exportTeamBulkTemplate,
+  importTeamBulk,
 } = require('../controllers/hr.controller');
 
 const router = express.Router();
@@ -82,6 +86,8 @@ router.patch(
 );
 router.delete('/departments/:id', sensitiveLimiter, validate({ params: idParam }), deactivateDepartment);
 router.post('/team', sensitiveLimiter, validate({ body: createTeamMemberBody }), createTeamMember);
+router.get('/team/bulk-template.xlsx', exportTeamBulkTemplate);
+router.post('/team/bulk-import', sensitiveLimiter, excelUpload.single('file'), importTeamBulk);
 router.patch(
   '/team/:id',
   sensitiveLimiter,
@@ -118,5 +124,6 @@ router.delete(
 router.get('/follow-ups', getFollowUps);
 router.patch('/follow-ups', validate({ body: updateFollowUpBody }), updateFollowUp);
 router.get('/export/manpower.xlsx', exportManpowerExcel);
+router.get('/export/daily-shifts.xlsx', exportDailyShiftsExcel);
 
 module.exports = router;
