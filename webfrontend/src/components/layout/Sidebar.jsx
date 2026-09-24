@@ -8,6 +8,7 @@ const NAV = [
   { to: '/app/attendance', label: 'Attendance' },
   { to: '/app/workforce', label: 'Workforce' },
   { to: '/app/reports', label: 'Reports' },
+  { to: '/app/notifications-demo', label: 'Notification Demo' },
   { to: '/app/settings', label: 'Settings' },
 ];
 

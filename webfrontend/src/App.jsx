@@ -28,6 +28,9 @@ const InchargeDetail = lazy(() =>
   import('./pages/InchargeDetail').then((m) => ({ default: m.InchargeDetail }))
 );
 const Reports = lazy(() => import('./pages/Reports').then((m) => ({ default: m.Reports })));
+const NotificationDemo = lazy(() =>
+  import('./pages/NotificationDemo').then((m) => ({ default: m.NotificationDemo }))
+);
 const Settings = lazy(() => import('./pages/Settings').then((m) => ({ default: m.Settings })));
 
 const queryClient = new QueryClient({
@@ -75,6 +78,7 @@ export default function App() {
                 <Route path="workforce/worker/:id" element={<WorkerDetail />} />
                 <Route path="workforce/incharge/:id" element={<InchargeDetail />} />
                 <Route path="reports" element={<Reports />} />
+                <Route path="notifications-demo" element={<NotificationDemo />} />
                 <Route path="settings" element={<Settings />} />
               </Route>
               <Route path="*" element={<Navigate to="/" replace />} />

@@ -19,9 +19,26 @@ const allowedOrigins =
       ? []
       : defaultDevOrigins;
 
+// In dev only: also accept any origin on the two known Vite dev ports
+// regardless of hostname — not just `localhost`, but the machine's LAN IP
+// too (e.g. http://10.222.224.177:5174), since that's how a phone on the
+// same WiFi/hotspot reaches a dev server, and that IP changes across
+// sessions/reconnects. Still fails closed in production, where
+// CORS_ALLOWED_ORIGINS must be set explicitly.
+const DEV_PORTS = ['5173', '5174'];
+function isDevLanOrigin(origin) {
+  if (process.env.NODE_ENV === 'production') return false;
+  try {
+    const url = new URL(origin);
+    return url.protocol === 'http:' && DEV_PORTS.includes(url.port);
+  } catch {
+    return false;
+  }
+}
+
 const corsOptions = {
   origin(origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (!origin || allowedOrigins.includes(origin) || isDevLanOrigin(origin)) {
       return callback(null, true);
     }
     callback(new Error('Not allowed by CORS'));

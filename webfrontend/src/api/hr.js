@@ -79,6 +79,15 @@ export const getWorkforce = async ({ active = 'true', role, department, q, page,
 // history pagination) is unaffected. `meta` (the history list's pagination
 // info) is merged in alongside employee/directReports/history rather than
 // dropped, the way the previous `return data.data` used to.
+// Demo-only push send (Notification Demo page) — sends a real push to the
+// selected workers' registered devices for showing the feature off. Creates
+// no poll/response record; the response is just delivery counts plus which
+// selected people (if any) have no registered device to reach.
+export const sendDemoNotification = async ({ workerIds, title, body }) => {
+  const { data } = await client.post('/hr/workforce/demo-notify', { workerIds, title, body });
+  return data.data;
+};
+
 export const getEmployee = async (employeeId, { page, limit } = {}) => {
   const { data } = await client.get(`/hr/employees/${employeeId}`, { params: { page, limit } });
   return { ...data.data, meta: data.meta };

@@ -17,6 +17,7 @@ const {
   createHrAdminBody,
   updateHrAdminBody,
   updateFollowUpBody,
+  demoNotifyBody,
 } = require('../validation/schemas');
 const {
   login,
@@ -27,6 +28,7 @@ const {
   getPollDetail,
   markAttendance,
   getWorkforce,
+  sendDemoNotification,
   getEmployee,
   getLiveBoard,
   getDepartments,
@@ -73,6 +75,7 @@ router.post(
 router.get('/polls/:pollId/export.xlsx', validate({ params: pollIdParam }), exportPollExcel);
 router.get('/polls/:pollId/export.pdf', validate({ params: pollIdParam }), exportPollPdf);
 router.get('/workforce', getWorkforce);
+router.post('/workforce/demo-notify', sensitiveLimiter, validate({ body: demoNotifyBody }), sendDemoNotification);
 router.get('/employees/:employeeId', validate({ params: employeeIdParam }), getEmployee);
 router.get('/live', getLiveBoard);
 router.get('/departments', getDepartments);

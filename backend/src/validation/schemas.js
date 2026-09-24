@@ -141,6 +141,14 @@ const updateFollowUpBody = z.object({
 
 const employeeIdParam = z.object({ employeeId: uuid('employee ID') });
 
+// Demo-only push send (HR "Notification demo" page) — no poll/response is
+// ever created from this, so the body is just who to send to and what to say.
+const demoNotifyBody = z.object({
+  workerIds: z.array(uuid('worker ID')).min(1, 'Select at least one worker'),
+  title: requiredString('Title'),
+  body: requiredString('Message'),
+});
+
 module.exports = {
   workerLoginBody,
   pushTokenBody,
@@ -161,4 +169,5 @@ module.exports = {
   updateHrAdminBody,
   updateFollowUpBody,
   employeeIdParam,
+  demoNotifyBody,
 };

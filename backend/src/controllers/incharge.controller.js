@@ -73,9 +73,9 @@ const teamWorkerSelect = {
   shiftEnd: true,
 };
 
-async function findTeamWorker(workerId, deptId) {
+async function findTeamWorker(workerId, inchargeId) {
   return prisma.user.findFirst({
-    where: { id: workerId, departmentId: deptId, role: 'worker', isActive: true },
+    where: { id: workerId, inchargeId, role: 'worker', isActive: true },
     select: teamWorkerSelect,
   });
 }
@@ -249,7 +249,7 @@ exports.getTeamWorkers = async (req, res, next) => {
     await ensurePollsForDepartment(deptId);
 
     const workers = await prisma.user.findMany({
-      where: { departmentId: deptId, role: 'worker', isActive: true },
+      where: { inchargeId: req.user.id, role: 'worker', isActive: true },
       select: {
         id: true,
         name: true,
@@ -338,6 +338,7 @@ exports.createTeamWorker = async (req, res, next) => {
         password: await hashPassword(password),
         role: 'worker',
         departmentId: getDeptId(req.user),
+        inchargeId: req.user.id,
         shiftStart: shift.shiftStart,
         shiftEnd: shift.shiftEnd,
         shiftName: shift.shiftName || '',
@@ -357,7 +358,7 @@ exports.createTeamWorker = async (req, res, next) => {
 
 exports.updateTeamWorker = async (req, res, next) => {
   try {
-    const worker = await findTeamWorker(req.params.workerId, getDeptId(req.user));
+    const worker = await findTeamWorker(req.params.workerId, req.user.id);
 
     if (!worker) {
       return res.status(404).json({ success: false, message: 'Worker not found in your team' });
@@ -419,7 +420,7 @@ exports.updateTeamWorker = async (req, res, next) => {
 
 exports.deleteTeamWorker = async (req, res, next) => {
   try {
-    const worker = await findTeamWorker(req.params.workerId, getDeptId(req.user));
+    const worker = await findTeamWorker(req.params.workerId, req.user.id);
 
     if (!worker) {
       return res.status(404).json({ success: false, message: 'Worker not found in your team' });

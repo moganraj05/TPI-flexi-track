@@ -20,6 +20,7 @@ const { buildTeamBulkTemplate, parseTeamBulkFile } = require('../services/bulk-i
 const { signToken } = require('../utils/jwt');
 const { comparePassword, hashPassword } = require('../utils/password');
 const { emitPollUpdate, emitFollowUpUpdate } = require('../realtime');
+const { sendPushNotifications } = require('../services/notification.service');
 
 // Parses optional fromDate/toDate — same YYYY-MM-DD-only format and UTC
 // midnight convention the existing single `date` filter already uses (both
@@ -489,6 +490,41 @@ exports.getWorkforce = async (req, res, next) => {
         return { ...formatted, reportCount: reportCounts.get(person.id) || 0 };
       }),
       meta: buildMeta(pagination, total),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Demo-only: sends a real push notification (same Expo/FCM path a live poll
+// uses) to the selected workers' registered devices, for showing the
+// feature off. Deliberately writes nothing — no Poll, no Response row, no
+// side effect beyond the push itself, so it's safe to fire as many times as
+// needed without leaving demo data behind in reports/history.
+exports.sendDemoNotification = async (req, res, next) => {
+  try {
+    const { workerIds, title, body } = req.body;
+
+    const people = await prisma.user.findMany({
+      where: { id: { in: workerIds }, role: { in: ['worker', 'incharge'] } },
+      select: { id: true, name: true, employeeId: true, pushToken: true },
+    });
+
+    const reachable = people.filter((p) => p.pushToken && p.pushToken.startsWith('ExponentPushToken['));
+    const unreachable = people.filter((p) => !reachable.includes(p));
+
+    const result = await sendPushNotifications(
+      reachable.map((p) => p.pushToken),
+      { title, body, data: { type: 'demo' } }
+    );
+
+    res.json({
+      success: true,
+      data: {
+        ...result,
+        targeted: people.length,
+        skipped: unreachable.map((p) => ({ id: p.id, name: p.name, employeeId: p.employeeId })),
+      },
     });
   } catch (error) {
     next(error);
