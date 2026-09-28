@@ -83,7 +83,7 @@ exports.getTodayPoll = async (req, res, next) => {
 
     const myResponse = await prisma.response.findUnique({
       where: { pollId_userId: { pollId: poll.id, userId: req.user.id } },
-    });
+    });                                                                             
 
     res.json({
       success: true,

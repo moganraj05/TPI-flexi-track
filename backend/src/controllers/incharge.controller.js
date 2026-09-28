@@ -1,6 +1,5 @@
 const prisma = require('../config/prisma');
 const { autoCloseExpiredPolls } = require('../utils/poll');
-const { ensurePollsForDepartment } = require('../services/poll-automation.service');
 const { hashPassword } = require('../utils/password');
 const { formatDept } = require('../utils/pollReport');
 const { parsePagination, buildMeta } = require('../utils/pagination');
@@ -61,6 +60,15 @@ const formatTeamWorker = (worker, livePoll = null, liveAnswer = null) => ({
 
 const getDeptId = (user) => user.departmentId;
 
+// A 'supervisor' ("Overall Incharge") oversees every worker in their plant,
+// not just people whose inchargeId happens to point at them directly —
+// unlike a shift 'incharge' ("Shift Incharge"), who only manages their own
+// direct reports. Without this, a supervisor with zero direct reports (the
+// normal case — workers report to a shift incharge, not to them) would see
+// an empty team despite genuinely overseeing the whole department.
+const teamScopeFor = (user) =>
+  user.role === 'supervisor' ? { departmentId: user.departmentId } : { inchargeId: user.id };
+
 // Only the columns the callers actually read back (formatTeamWorker plus the
 // shift fallbacks) — not the whole row, password hash included.
 const teamWorkerSelect = {
@@ -73,9 +81,9 @@ const teamWorkerSelect = {
   shiftEnd: true,
 };
 
-async function findTeamWorker(workerId, inchargeId) {
+async function findTeamWorker(workerId, scope) {
   return prisma.user.findFirst({
-    where: { id: workerId, inchargeId, role: 'worker', isActive: true },
+    where: { id: workerId, ...scope, role: 'worker', isActive: true },
     select: teamWorkerSelect,
   });
 }
@@ -153,7 +161,6 @@ exports.getMyPolls = async (req, res, next) => {
   try {
     const deptId = req.user.departmentId;
     await autoCloseExpiredPolls({ departmentId: deptId });
-    await ensurePollsForDepartment(deptId);
 
     // defaultLimit: 50 matches the hardcoded `take: 50` this replaces, so a
     // caller that sends neither `page` nor `limit` (any client not yet
@@ -246,27 +253,29 @@ exports.closePoll = async (req, res, next) => {
 exports.getTeamWorkers = async (req, res, next) => {
   try {
     const deptId = req.user.departmentId;
-    await ensurePollsForDepartment(deptId);
-
-    const workers = await prisma.user.findMany({
-      where: { inchargeId: req.user.id, role: 'worker', isActive: true },
-      select: {
-        id: true,
-        name: true,
-        employeeId: true,
-        phone: true,
-        pushToken: true,
-        shiftStart: true,
-        shiftEnd: true,
-      },
-      orderBy: { name: 'asc' },
-    });
 
     const now = new Date();
-    const livePolls = await prisma.poll.findMany({
-      where: { departmentId: deptId, status: 'open', opensAt: { lte: now }, closesAt: { gt: now } },
-      select: { id: true, title: true, status: true, opensAt: true, closesAt: true, shiftStart: true, shiftEnd: true },
-    });
+    // Independent of each other — run concurrently instead of back-to-back
+    // to pay one round-trip's latency instead of two.
+    const [workers, livePolls] = await Promise.all([
+      prisma.user.findMany({
+        where: { ...teamScopeFor(req.user), role: 'worker', isActive: true },
+        select: {
+          id: true,
+          name: true,
+          employeeId: true,
+          phone: true,
+          pushToken: true,
+          shiftStart: true,
+          shiftEnd: true,
+        },
+        orderBy: { name: 'asc' },
+      }),
+      prisma.poll.findMany({
+        where: { departmentId: deptId, status: 'open', opensAt: { lte: now }, closesAt: { gt: now } },
+        select: { id: true, title: true, status: true, opensAt: true, closesAt: true, shiftStart: true, shiftEnd: true },
+      }),
+    ]);
 
     const pollByShift = new Map(livePolls.map((p) => [`${p.shiftStart}|${p.shiftEnd}`, p]));
     const livePollIds = livePolls.map((p) => p.id);
@@ -358,7 +367,7 @@ exports.createTeamWorker = async (req, res, next) => {
 
 exports.updateTeamWorker = async (req, res, next) => {
   try {
-    const worker = await findTeamWorker(req.params.workerId, req.user.id);
+    const worker = await findTeamWorker(req.params.workerId, teamScopeFor(req.user));
 
     if (!worker) {
       return res.status(404).json({ success: false, message: 'Worker not found in your team' });
@@ -420,7 +429,7 @@ exports.updateTeamWorker = async (req, res, next) => {
 
 exports.deleteTeamWorker = async (req, res, next) => {
   try {
-    const worker = await findTeamWorker(req.params.workerId, req.user.id);
+    const worker = await findTeamWorker(req.params.workerId, teamScopeFor(req.user));
 
     if (!worker) {
       return res.status(404).json({ success: false, message: 'Worker not found in your team' });
