@@ -18,9 +18,8 @@ const { DEFAULT_SHIFT_START, DEFAULT_SHIFT_END } = require('../utils/shift');
 const { resolveShift, getShiftByTimes, getShiftCatalog, getShiftByCode, formatShiftName } = require('../config/shiftCatalog');
 const { buildTeamBulkTemplate, parseTeamBulkFile } = require('../services/bulk-import.service');
 const { signToken } = require('../utils/jwt');
-const { comparePassword, hashPassword } = require('../utils/password');
+const { comparePassword, hashPassword, DUMMY_HASH } = require('../utils/password');
 const { emitPollUpdate, emitFollowUpUpdate } = require('../realtime');
-const { sendPushNotifications } = require('../services/notification.service');
 
 // Parses optional fromDate/toDate — same YYYY-MM-DD-only format and UTC
 // midnight convention the existing single `date` filter already uses (both
@@ -63,6 +62,9 @@ const formatHrUser = (user) => ({
   phone: user.phone || '',
   role: user.role,
   isActive: user.isActive !== false,
+  approvalStatus: user.approvalStatus || 'approved',
+  department: user.department ? { id: user.department.id, name: user.department.name, code: user.department.code } : null,
+  createdAt: user.createdAt || null,
 });
 
 const formatIncharge = (inc) => {
@@ -178,6 +180,9 @@ const hrUserSelect = {
   phone: true,
   role: true,
   isActive: true,
+  approvalStatus: true,
+  createdAt: true,
+  department: { select: departmentSelect },
 };
 
 const loadPollOr404 = async (pollId, res) => {
@@ -201,14 +206,27 @@ exports.login = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Email and password are required' });
     }
 
-    const user = await prisma.user.findUnique({ where: { email } });
-    if (!user || !user.isActive || !HR_ROLES.includes(user.role)) {
+    const user = await prisma.user.findUnique({ where: { email }, include: { department: { select: departmentSelect } } });
+
+    // The password is always checked (against a dummy hash when the email is
+    // unknown) so the response time is the same either way, and the account's
+    // status is only revealed to someone who already knows its password.
+    const isMatch = await comparePassword(String(password), user?.password || DUMMY_HASH);
+    if (!user || !isMatch || !HR_ROLES.includes(user.role)) {
       return res.status(401).json({ success: false, message: 'Invalid HR credentials' });
     }
 
-    const isMatch = await comparePassword(password, user.password);
-    if (!isMatch) {
-      return res.status(401).json({ success: false, message: 'Invalid HR credentials' });
+    if (user.approvalStatus === 'pending') {
+      return res.status(403).json({
+        success: false,
+        message: 'Your account is waiting for administrator approval. You will receive an email once it is approved.',
+      });
+    }
+    if (!user.isActive) {
+      return res.status(403).json({
+        success: false,
+        message: 'This account has been deactivated. Please contact your administrator.',
+      });
     }
 
     const token = signToken(user);
@@ -490,41 +508,6 @@ exports.getWorkforce = async (req, res, next) => {
         return { ...formatted, reportCount: reportCounts.get(person.id) || 0 };
       }),
       meta: buildMeta(pagination, total),
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// Demo-only: sends a real push notification (same Expo/FCM path a live poll
-// uses) to the selected workers' registered devices, for showing the
-// feature off. Deliberately writes nothing — no Poll, no Response row, no
-// side effect beyond the push itself, so it's safe to fire as many times as
-// needed without leaving demo data behind in reports/history.
-exports.sendDemoNotification = async (req, res, next) => {
-  try {
-    const { workerIds, title, body } = req.body;
-
-    const people = await prisma.user.findMany({
-      where: { id: { in: workerIds }, role: { in: ['worker', 'incharge'] } },
-      select: { id: true, name: true, employeeId: true, pushToken: true },
-    });
-
-    const reachable = people.filter((p) => p.pushToken && p.pushToken.startsWith('ExponentPushToken['));
-    const unreachable = people.filter((p) => !reachable.includes(p));
-
-    const result = await sendPushNotifications(
-      reachable.map((p) => p.pushToken),
-      { title, body, data: { type: 'demo' } }
-    );
-
-    res.json({
-      success: true,
-      data: {
-        ...result,
-        targeted: people.length,
-        skipped: unreachable.map((p) => ({ id: p.id, name: p.name, employeeId: p.employeeId })),
-      },
     });
   } catch (error) {
     next(error);
@@ -1132,6 +1115,11 @@ exports.updateHrAdmin = async (req, res, next) => {
     if (!admin) {
       return res.status(404).json({ success: false, message: 'HR login not found' });
     }
+    // A pending self-registration only leaves "pending" through approve or
+    // reject — reactivating it here would skip the approval step entirely.
+    if (admin.approvalStatus === 'pending') {
+      return res.status(400).json({ success: false, message: 'Approve or reject this registration first' });
+    }
 
     const { name, phone, isActive } = req.body;
     const data = {};
@@ -1162,7 +1150,7 @@ exports.updateHrAdmin = async (req, res, next) => {
       data.isActive = !!isActive;
     }
 
-    const updated = await prisma.user.update({ where: { id: admin.id }, data });
+    const updated = await prisma.user.update({ where: { id: admin.id }, data, select: hrUserSelect });
     res.json({ success: true, message: 'HR login updated', data: formatHrUser(updated) });
   } catch (error) {
     next(error);
@@ -1174,6 +1162,9 @@ exports.deactivateHrAdmin = async (req, res, next) => {
     const admin = await prisma.user.findFirst({ where: { id: req.params.id, role: { in: HR_ROLES } } });
     if (!admin) {
       return res.status(404).json({ success: false, message: 'HR login not found' });
+    }
+    if (admin.approvalStatus === 'pending') {
+      return res.status(400).json({ success: false, message: 'Approve or reject this registration first' });
     }
 
     if (admin.id === req.user.id) {

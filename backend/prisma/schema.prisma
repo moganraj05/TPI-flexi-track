@@ -34,6 +34,20 @@ enum FollowUpStatus {
   confirmed_not_coming
 }
 
+// Self-registered HR logins start as `pending` (and inactive) until an
+// admin/superadmin approves them. Every account created any other way —
+// admin-created logins, workers, incharges, seeds — is `approved` from the
+// start, which is also what every pre-existing row gets.
+enum ApprovalStatus {
+  pending
+  approved
+}
+
+enum OtpPurpose {
+  register
+  reset_password
+}
+
 model Department {
   id        String   @id @default(uuid()) @db.Uuid
   name      String
@@ -69,6 +83,10 @@ model User {
   pushToken    String?  @map("push_token")
   isActive     Boolean  @default(true) @map("is_active")
   tokenVersion Int      @default(0) @map("token_version")
+  approvalStatus ApprovalStatus @default(approved) @map("approval_status")
+  emailVerifiedAt DateTime? @map("email_verified_at")
+  approvedAt   DateTime? @map("approved_at")
+  approvedById String?  @map("approved_by") @db.Uuid
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
@@ -156,4 +174,28 @@ model FollowUp {
   // its leading column.
   @@index([pollId])
   @@map("followups")
+}
+
+// One row per emailed one-time code (HR self-registration and forgot-password).
+// Only an HMAC of the code is stored, never the code itself. A row is live
+// while consumedAt is null and expiresAt is in the future; sending a new code
+// for the same email+purpose consumes any older live one, so only the latest
+// code ever works. `payload` carries the registration details (name, employee
+// ID, plant, phone) between the send step and the final set-password step.
+model EmailOtp {
+  id         String     @id @default(uuid()) @db.Uuid
+  email      String
+  purpose    OtpPurpose
+  codeHash   String     @map("code_hash")
+  payload    Json?
+  attempts   Int        @default(0)
+  expiresAt  DateTime   @map("expires_at")
+  verifiedAt DateTime?  @map("verified_at")
+  consumedAt DateTime?  @map("consumed_at")
+  requestIp  String?    @map("request_ip")
+  createdAt  DateTime   @default(now()) @map("created_at")
+
+  @@index([email, purpose, createdAt])
+  @@index([expiresAt])
+  @@map("email_otps")
 }

@@ -141,13 +141,48 @@ const updateFollowUpBody = z.object({
 
 const employeeIdParam = z.object({ employeeId: uuid('employee ID') });
 
-// Demo-only push send (HR "Notification demo" page) — no poll/response is
-// ever created from this, so the body is just who to send to and what to say.
-const demoNotifyBody = z.object({
-  workerIds: z.array(uuid('worker ID')).min(1, 'Select at least one worker'),
-  title: requiredString('Title'),
-  body: requiredString('Message'),
+// ---- hr self-registration / forgot password ----
+// Stricter than the legacy 6-character rule, for the two public flows only
+// (self-registration and email reset); 72 is bcrypt's input limit.
+const strongPassword = () =>
+  z
+    .string()
+    .min(8, 'Password must be at least 8 characters')
+    .max(72, 'Password must be at most 72 characters')
+    .refine((v) => /[A-Za-z]/.test(v) && /\d/.test(v), 'Password must contain at least one letter and one number');
+
+const emailField = () => z.string().trim().toLowerCase().email('Enter a valid email address').max(254);
+const otpCode = () => z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code');
+const ticketField = () => z.string().min(1, 'Verification is missing. Please start again.');
+
+const withPasswordConfirmation = (shape) =>
+  z.object(shape).refine((b) => b.password === b.confirmPassword, {
+    message: 'Password and confirm password do not match',
+    path: ['confirmPassword'],
+  });
+
+const registerSendOtpBody = z.object({
+  name: requiredString('Name').max(100, 'Name is too long'),
+  employeeId: requiredString('Employee ID').max(30, 'Employee ID is too long'),
+  department: uuid('plant'),
+  phone: z
+    .string()
+    .trim()
+    .regex(/^\+?[0-9\s-]{7,15}$/, 'Enter a valid phone number'),
+  email: emailField(),
 });
+
+const otpVerifyBody = z.object({ email: emailField(), otp: otpCode() });
+
+const passwordWithTicketBody = withPasswordConfirmation({
+  ticket: ticketField(),
+  password: strongPassword(),
+  confirmPassword: z.string(),
+});
+
+const forgotPasswordBody = z.object({ email: emailField() });
+
+const approveHrAdminBody = z.object({ role: z.enum(['hr', 'admin', 'superadmin'], { message: 'Invalid role' }).optional() });
 
 module.exports = {
   workerLoginBody,
@@ -169,5 +204,9 @@ module.exports = {
   updateHrAdminBody,
   updateFollowUpBody,
   employeeIdParam,
-  demoNotifyBody,
+  registerSendOtpBody,
+  otpVerifyBody,
+  passwordWithTicketBody,
+  forgotPasswordBody,
+  approveHrAdminBody,
 };

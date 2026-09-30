@@ -13,8 +13,11 @@ import {
   createHrAdmin,
   updateHrAdmin,
   deactivateHrAdmin,
+  approveHrRegistration,
+  rejectHrRegistration,
 } from '../api/hr';
-import { theme, chipStyle } from '../theme';
+import { theme, chipStyle, WARNING, WARNING_SOFT } from '../theme';
+import { formatDateTime } from '../utils/format';
 import { CenteredSpinner } from '../components/common/Spinner';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
 
@@ -305,8 +308,34 @@ function ManageHrAdmins({ currentUserId }) {
   const [addError, setAddError] = useState('');
 
   const [deactivateTarget, setDeactivateTarget] = useState(null);
+  const [rejectTarget, setRejectTarget] = useState(null);
+  const [approveRoles, setApproveRoles] = useState({});
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['hr-admins'] });
+
+  const pending = (admins || []).filter((a) => a.approvalStatus === 'pending');
+  const accounts = (admins || []).filter((a) => a.approvalStatus !== 'pending');
+
+  const approve = async (admin) => {
+    setBusy(true);
+    try {
+      const result = await approveHrRegistration(admin.id, approveRoles[admin.id] || 'hr');
+      toast(result.message || 'Registration approved');
+    } catch (err) {
+      toast(err.message || 'Could not approve registration');
+    } finally {
+      setBusy(false);
+      refresh();
+    }
+  };
+
+  // Throws on failure so ConfirmDialog shows the error inline.
+  const confirmReject = async () => {
+    const result = await rejectHrRegistration(rejectTarget.id);
+    toast(result.message || 'Registration rejected');
+    setRejectTarget(null);
+    refresh();
+  };
 
   const startEdit = (admin) => {
     setEditingId(admin.id);
@@ -399,13 +428,67 @@ function ManageHrAdmins({ currentUserId }) {
           onCancel={() => setDeactivateTarget(null)}
         />
       )}
+      {rejectTarget && (
+        <ConfirmDialog
+          title="Reject registration?"
+          message={`${rejectTarget.name} (${rejectTarget.email}) will be removed and notified by email. They can register again later if needed.`}
+          confirmLabel="Reject"
+          onConfirm={confirmReject}
+          onCancel={() => setRejectTarget(null)}
+        />
+      )}
       <div style={{ padding: '16px 16px 0', fontWeight: 700, fontSize: 16, color: theme.textPrimary }}>Manage HR logins</div>
 
       {isLoading ? (
         <CenteredSpinner label="Loading HR logins…" />
       ) : (
         <div style={{ padding: 16 }}>
-          {(admins || []).map((admin) => (
+          {pending.length > 0 && (
+            <div style={{ background: WARNING_SOFT, borderRadius: 10, padding: 12, marginBottom: 16 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: WARNING, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>
+                Awaiting approval ({pending.length})
+              </div>
+              {pending.map((p) => (
+                <div key={p.id} style={{ background: theme.surface, borderRadius: 8, padding: 12, marginBottom: 8 }}>
+                  <div style={{ fontWeight: 700, color: theme.textPrimary }}>{p.name}</div>
+                  <div style={{ fontSize: 12, color: theme.textSecondary, marginTop: 2, lineHeight: 1.6 }}>
+                    {p.employeeId} · {p.email}
+                    <br />
+                    {p.phone || 'No phone'} · {p.department ? `${p.department.name} (${p.department.code})` : 'No plant'}
+                    {p.createdAt && (
+                      <>
+                        <br />
+                        Registered {formatDateTime(p.createdAt)}
+                      </>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <select
+                      value={approveRoles[p.id] || 'hr'}
+                      onChange={(e) => setApproveRoles((r) => ({ ...r, [p.id]: e.target.value }))}
+                      disabled={busy}
+                      aria-label={`Role for ${p.name}`}
+                      style={{ ...theme.input, width: 'auto', padding: '6px 10px', fontSize: 12.5 }}
+                    >
+                      {HR_ROLE_OPTIONS.map((r) => (
+                        <option key={r} value={r}>
+                          {r}
+                        </option>
+                      ))}
+                    </select>
+                    <button onClick={() => approve(p)} disabled={busy} style={theme.successBtnOutline}>
+                      Approve
+                    </button>
+                    <button onClick={() => setRejectTarget(p)} disabled={busy} style={theme.ghostBtn}>
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {accounts.map((admin) => (
             <div key={admin.id} style={{ borderBottom: `1px solid ${theme.borderColor}`, paddingBottom: 12, marginBottom: 12 }}>
               {editingId === admin.id ? (
                 <>
@@ -453,6 +536,7 @@ function ManageHrAdmins({ currentUserId }) {
                     </div>
                     <span style={{ fontSize: 12, color: theme.textSecondary }}>
                       {admin.employeeId} · {admin.email}
+                      {admin.department ? ` · ${admin.department.code}` : ''}
                     </span>
                   </div>
                   <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>

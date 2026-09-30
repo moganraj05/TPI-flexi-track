@@ -55,8 +55,11 @@ function initRealtime(httpServer) {
     // for worker/incharge clients (mobile), and a shared "hr" room for every
     // HR/admin/superadmin client (web) regardless of department.
     socket.join(`user:${user.id}`);
-    if (user.departmentId) socket.join(`dept:${user.departmentId}`);
+    // HR users can carry a plant too (recorded at self-registration), but
+    // they already get every department's events through the "hr" room —
+    // joining the department room as well would deliver each event twice.
     if (HR_ROLES.includes(user.role)) socket.join('hr');
+    else if (user.departmentId) socket.join(`dept:${user.departmentId}`);
 
     logger.info('realtime.connected', { socketId: socket.id, userId: user.id, role: user.role });
 

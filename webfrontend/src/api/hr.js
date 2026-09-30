@@ -79,15 +79,6 @@ export const getWorkforce = async ({ active = 'true', role, department, q, page,
 // history pagination) is unaffected. `meta` (the history list's pagination
 // info) is merged in alongside employee/directReports/history rather than
 // dropped, the way the previous `return data.data` used to.
-// Demo-only push send (Notification Demo page) — sends a real push to the
-// selected workers' registered devices for showing the feature off. Creates
-// no poll/response record; the response is just delivery counts plus which
-// selected people (if any) have no registered device to reach.
-export const sendDemoNotification = async ({ workerIds, title, body }) => {
-  const { data } = await client.post('/hr/workforce/demo-notify', { workerIds, title, body });
-  return data.data;
-};
-
 export const getEmployee = async (employeeId, { page, limit } = {}) => {
   const { data } = await client.get(`/hr/employees/${employeeId}`, { params: { page, limit } });
   return { ...data.data, meta: data.meta };
@@ -180,6 +171,57 @@ export const updateHrAdmin = async (id, updates) => {
 
 export const deactivateHrAdmin = async (id) => {
   const { data } = await client.delete(`/hr/admins/${id}`);
+  return data;
+};
+
+// Pending self-registrations: approve (optionally choosing the role) or
+// reject (deletes the pending account). Admin/superadmin only.
+export const approveHrRegistration = async (id, role) => {
+  const { data } = await client.post(`/hr/admins/${id}/approve`, { role });
+  return data;
+};
+
+export const rejectHrRegistration = async (id) => {
+  const { data } = await client.post(`/hr/admins/${id}/reject`, {});
+  return data;
+};
+
+// ---- Public (signed-out) account flows: self-registration & forgot password ----
+// Each send returns { expiresInMinutes, resendAfterSeconds }; each verify
+// returns { ticket } which the final step must present.
+
+export const getRegistrationPlants = async () => {
+  const { data } = await client.get('/hr/register/plants');
+  return data.data;
+};
+
+export const sendRegisterOtp = async ({ name, employeeId, department, phone, email }) => {
+  const { data } = await client.post('/hr/register/send-otp', { name, employeeId, department, phone, email });
+  return { message: data.message, ...data.data };
+};
+
+export const verifyRegisterOtp = async (email, otp) => {
+  const { data } = await client.post('/hr/register/verify-otp', { email, otp });
+  return data.data;
+};
+
+export const completeRegistration = async ({ ticket, password, confirmPassword }) => {
+  const { data } = await client.post('/hr/register/complete', { ticket, password, confirmPassword });
+  return data;
+};
+
+export const sendResetOtp = async (email) => {
+  const { data } = await client.post('/hr/password/forgot', { email });
+  return { message: data.message, ...data.data };
+};
+
+export const verifyResetOtp = async (email, otp) => {
+  const { data } = await client.post('/hr/password/verify-otp', { email, otp });
+  return data.data;
+};
+
+export const resetPassword = async ({ ticket, password, confirmPassword }) => {
+  const { data } = await client.post('/hr/password/reset', { ticket, password, confirmPassword });
   return data;
 };
 

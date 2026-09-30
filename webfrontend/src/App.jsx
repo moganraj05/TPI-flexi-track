@@ -9,6 +9,10 @@ import { AppShell } from './components/layout/AppShell';
 // it's the very first thing an unauthenticated visitor needs, so there's
 // nothing to gain and a network round-trip to lose by deferring it.
 import { Login } from './pages/Login';
+// Signed-out pages are imported eagerly like Login — the lazy-route
+// Suspense boundary lives inside AppShell, which these pages sit outside of.
+import { Register } from './pages/Register';
+import { ForgotPassword } from './pages/ForgotPassword';
 
 // Every authenticated page loads on demand instead of all up front. These
 // are the pages that pull in the bulk of the app's own code (tables,
@@ -28,9 +32,6 @@ const InchargeDetail = lazy(() =>
   import('./pages/InchargeDetail').then((m) => ({ default: m.InchargeDetail }))
 );
 const Reports = lazy(() => import('./pages/Reports').then((m) => ({ default: m.Reports })));
-const NotificationDemo = lazy(() =>
-  import('./pages/NotificationDemo').then((m) => ({ default: m.NotificationDemo }))
-);
 const Settings = lazy(() => import('./pages/Settings').then((m) => ({ default: m.Settings })));
 
 const queryClient = new QueryClient({
@@ -61,6 +62,8 @@ export default function App() {
             <Routes>
               <Route path="/" element={<Navigate to="/app/dashboard" replace />} />
               <Route path="/login" element={<Login />} />
+              <Route path="/register" element={<Register />} />
+              <Route path="/forgot-password" element={<ForgotPassword />} />
               <Route
                 path="/app"
                 element={
@@ -78,7 +81,6 @@ export default function App() {
                 <Route path="workforce/worker/:id" element={<WorkerDetail />} />
                 <Route path="workforce/incharge/:id" element={<InchargeDetail />} />
                 <Route path="reports" element={<Reports />} />
-                <Route path="notifications-demo" element={<NotificationDemo />} />
                 <Route path="settings" element={<Settings />} />
               </Route>
               <Route path="*" element={<Navigate to="/" replace />} />

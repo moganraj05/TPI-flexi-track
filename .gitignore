@@ -9,3 +9,6 @@ dist/
 
 # Claude Code local session config, not project source
 .claude/settings.local.json
+
+# Server logs written by deploy/start-all.js
+logs/

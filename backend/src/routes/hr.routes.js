@@ -1,7 +1,7 @@
 const express = require('express');
 const { authenticate, authorize } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
-const { loginLimiter, sensitiveLimiter } = require('../middleware/rateLimiters');
+const { loginLimiter, sensitiveLimiter, otpSendLimiter, otpVerifyLimiter } = require('../middleware/rateLimiters');
 const { excelUpload } = require('../middleware/upload');
 const {
   hrLoginBody,
@@ -17,8 +17,23 @@ const {
   createHrAdminBody,
   updateHrAdminBody,
   updateFollowUpBody,
-  demoNotifyBody,
+  registerSendOtpBody,
+  otpVerifyBody,
+  passwordWithTicketBody,
+  forgotPasswordBody,
+  approveHrAdminBody,
 } = require('../validation/schemas');
+const {
+  getRegistrationPlants,
+  sendRegisterOtp,
+  verifyRegisterOtp,
+  completeRegistration,
+  sendResetOtp,
+  verifyResetOtp,
+  resetPassword,
+  approveHrRegistration,
+  rejectHrRegistration,
+} = require('../controllers/hr-account.controller');
 const {
   login,
   logout,
@@ -28,7 +43,6 @@ const {
   getPollDetail,
   markAttendance,
   getWorkforce,
-  sendDemoNotification,
   getEmployee,
   getLiveBoard,
   getDepartments,
@@ -58,6 +72,17 @@ const router = express.Router();
 
 router.post('/login', loginLimiter, validate({ body: hrLoginBody }), login);
 
+// Public HR self-registration (email OTP -> set password -> admin approval)
+// and forgot-password (email OTP -> new password). Unauthenticated by
+// nature, so they sit above router.use(authenticate).
+router.get('/register/plants', getRegistrationPlants);
+router.post('/register/send-otp', otpSendLimiter, validate({ body: registerSendOtpBody }), sendRegisterOtp);
+router.post('/register/verify-otp', otpVerifyLimiter, validate({ body: otpVerifyBody }), verifyRegisterOtp);
+router.post('/register/complete', otpVerifyLimiter, validate({ body: passwordWithTicketBody }), completeRegistration);
+router.post('/password/forgot', otpSendLimiter, validate({ body: forgotPasswordBody }), sendResetOtp);
+router.post('/password/verify-otp', otpVerifyLimiter, validate({ body: otpVerifyBody }), verifyResetOtp);
+router.post('/password/reset', otpVerifyLimiter, validate({ body: passwordWithTicketBody }), resetPassword);
+
 router.use(authenticate);
 router.use(authorize('hr', 'admin', 'superadmin'));
 
@@ -75,7 +100,6 @@ router.post(
 router.get('/polls/:pollId/export.xlsx', validate({ params: pollIdParam }), exportPollExcel);
 router.get('/polls/:pollId/export.pdf', validate({ params: pollIdParam }), exportPollPdf);
 router.get('/workforce', getWorkforce);
-router.post('/workforce/demo-notify', sensitiveLimiter, validate({ body: demoNotifyBody }), sendDemoNotification);
 router.get('/employees/:employeeId', validate({ params: employeeIdParam }), getEmployee);
 router.get('/live', getLiveBoard);
 router.get('/departments', getDepartments);
@@ -115,6 +139,20 @@ router.patch(
   sensitiveLimiter,
   validate({ params: idParam, body: updateHrAdminBody }),
   updateHrAdmin
+);
+router.post(
+  '/admins/:id/approve',
+  authorize('admin', 'superadmin'),
+  sensitiveLimiter,
+  validate({ params: idParam, body: approveHrAdminBody }),
+  approveHrRegistration
+);
+router.post(
+  '/admins/:id/reject',
+  authorize('admin', 'superadmin'),
+  sensitiveLimiter,
+  validate({ params: idParam }),
+  rejectHrRegistration
 );
 router.delete(
   '/admins/:id',

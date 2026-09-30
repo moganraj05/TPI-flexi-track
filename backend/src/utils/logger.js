@@ -24,6 +24,10 @@ const SENSITIVE_KEYS = new Set([
   'pushtoken',
   'jwt',
   'refreshtoken',
+  'otp',
+  'ticket',
+  'codehash',
+  'api-key',
 ]);
 
 const REDACTED = '[redacted]';

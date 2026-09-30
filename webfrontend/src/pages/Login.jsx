@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { theme } from '../theme';
 import { useAuth } from '../context/AuthContext';
-import brandMark from '../assets/brand-mark.svg';
+import { AuthLayout } from '../components/auth/AuthLayout';
+import { authLinkStyle } from '../components/auth/authStyles';
 
 // Small stroke icons for the input fields — no icon library in this project,
 // and two glyphs don't justify adding one.
@@ -49,18 +50,7 @@ export function Login() {
   };
 
   return (
-    <div style={theme.loginPage}>
-      <div style={theme.loginLeftPanel}>
-        <img src={brandMark} alt="" style={theme.loginWatermark} aria-hidden="true" />
-        <div style={theme.loginLogoGlow} aria-hidden="true" />
-        <div style={{ position: 'relative' }}>
-          <div style={theme.loginBadge}>Ops Console</div>
-          <img src={brandMark} alt="" style={{ width: 88, height: 88, display: 'block', marginBottom: 20 }} />
-          <div style={{ fontSize: 40, fontWeight: 800, letterSpacing: '-0.02em', lineHeight: 1.1 }}>FlexiTrack</div>
-        </div>
-      </div>
-
-      <div style={theme.loginRightPanel}>
+    <AuthLayout>
         <form onSubmit={handleSubmit} style={theme.loginCard} className="ft-fade-in">
           <div style={{ fontSize: 22, fontWeight: 800, color: theme.textPrimary }}>Sign in</div>
           <div style={{ fontSize: 13, color: theme.mutedColor, marginTop: 4, marginBottom: 8 }}>
@@ -75,13 +65,19 @@ export function Login() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="hr.admin@flexitrack.com"
+              autoComplete="email"
+              placeholder="name@tii.murugappa.com"
               style={fieldInputStyle}
               className="ft-login-input"
             />
           </div>
 
-          <label style={theme.label}>Password</label>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+            <label style={theme.label}>Password</label>
+            <Link to="/forgot-password" style={{ ...authLinkStyle, fontSize: 12 }}>
+              Forgot password?
+            </Link>
+          </div>
           <div style={{ position: 'relative' }}>
             <LockIcon style={fieldIconStyle} />
             <input
@@ -89,6 +85,7 @@ export function Login() {
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
               placeholder="••••••••"
               style={fieldInputStyle}
               className="ft-login-input"
@@ -100,8 +97,14 @@ export function Login() {
           <button type="submit" disabled={submitting} className="ft-btn" style={{ ...theme.primaryBtn, opacity: submitting ? 0.7 : 1 }}>
             {submitting ? 'Signing in…' : 'Sign in'}
           </button>
+
+          <div style={{ marginTop: 16, fontSize: 13, color: theme.mutedColor, textAlign: 'center' }}>
+            New HR user?{' '}
+            <Link to="/register" style={authLinkStyle}>
+              Create an account
+            </Link>
+          </div>
         </form>
-      </div>
-    </div>
+    </AuthLayout>
   );
 }

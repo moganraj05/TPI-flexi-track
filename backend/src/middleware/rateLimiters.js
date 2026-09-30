@@ -37,4 +37,26 @@ const apiLimiter = rateLimit({
   message: { success: false, message: 'Too many requests. Please slow down.' },
 });
 
-module.exports = { loginLimiter, sensitiveLimiter, apiLimiter };
+// Public, unauthenticated email-OTP endpoints (HR self-registration and
+// forgot password). Per IP, on top of the per-email cooldown and hourly cap
+// enforced in otp.service.js — this one stops a single machine from using
+// the send endpoint to spray codes at many different addresses.
+const otpSendLimiter = rateLimit({
+  windowMs: Number(process.env.RATE_LIMIT_OTP_SEND_WINDOW_MS) || 15 * 60 * 1000,
+  max: Number(process.env.RATE_LIMIT_OTP_SEND_MAX) || 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many code requests. Please try again later.' },
+});
+
+// Code verification and the final set-password step. Each code already
+// allows only a few wrong attempts; this caps guessing across codes.
+const otpVerifyLimiter = rateLimit({
+  windowMs: Number(process.env.RATE_LIMIT_OTP_VERIFY_WINDOW_MS) || 15 * 60 * 1000,
+  max: Number(process.env.RATE_LIMIT_OTP_VERIFY_MAX) || 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many attempts. Please try again later.' },
+});
+
+module.exports = { loginLimiter, sensitiveLimiter, apiLimiter, otpSendLimiter, otpVerifyLimiter };
