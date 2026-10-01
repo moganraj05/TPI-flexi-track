@@ -2,19 +2,25 @@
 #
 # Run from the project folder (Docker Desktop must be running):
 #   powershell -ExecutionPolicy Bypass -File scripts\import-supabase.ps1
+# Non-interactive (e.g. from an automation/agent shell), taking the Supabase
+# URL from DIRECT_URL in backend\.env:
+#   powershell -ExecutionPolicy Bypass -File scripts\import-supabase.ps1 -Yes
 #
 # What it does:
-#   1. Wipes the Docker FlexiTrack database (the Docker copy only; Supabase is
-#      only ever READ, never changed)
-#   2. Starts just the database container
-#   3. Dumps the Supabase data to a temporary file
+#   1. Dumps the Supabase data to a temporary file (Supabase is only ever
+#      READ, never changed)
+#   2. Wipes the Docker FlexiTrack database (only after the dump succeeded)
+#   3. Starts just the database container
 #   4. Loads that file into the Docker database
 #   5. Clears phone push tokens, so this copy never notifies real workers
 #   6. Shows row counts, deletes the temp file, starts the full app
 
 param(
-  # Supabase DIRECT_URL (port 5432). Asked for if not given.
-  [string]$DirectUrl
+  # Supabase DIRECT_URL (port 5432). If omitted: DIRECT_URL from
+  # backend\.env when it points at Supabase, otherwise asked for.
+  [string]$DirectUrl,
+  # Skip the "Type YES" confirmation.
+  [switch]$Yes
 )
 
 # Native commands (docker) report failure via exit codes, checked after each
@@ -39,18 +45,37 @@ foreach ($line in Get-Content '.env') {
 docker info *> $null
 if ($LASTEXITCODE -ne 0) { Fail "Docker is not running. Open Docker Desktop, wait for 'Engine running', then run this again." }
 
+# Docker overrides backend\.env's database settings with its own Postgres,
+# so a Supabase DIRECT_URL left there is unused by the app and safe to read.
+if (-not $DirectUrl -and (Test-Path 'backend\.env')) {
+  foreach ($line in Get-Content 'backend\.env') {
+    if ($line -match '^\s*DIRECT_URL\s*=\s*"?([^"]+?)"?\s*$') {
+      # Copy the capture first: the -match below overwrites $Matches.
+      $candidate = $Matches[1]
+      if ($candidate -match 'supabase') {
+        $DirectUrl = $candidate
+        Write-Host "Using DIRECT_URL from backend\.env"
+      }
+    }
+  }
+}
 if (-not $DirectUrl) {
+  if ($Yes) { Fail "No Supabase URL found. Put the Supabase DIRECT_URL (port 5432) in backend\.env, or pass -DirectUrl." }
   Write-Host "Paste the Supabase DIRECT_URL (the one with port 5432), then press Enter:" -ForegroundColor Yellow
   $DirectUrl = (Read-Host).Trim().Trim('"')
 }
 if ($DirectUrl -notmatch '^postgres(ql)?://') { Fail "That doesn't look like a database URL (it must start with postgresql://)." }
 if ($DirectUrl -match ':6543/') { Fail "That is the pooled URL (port 6543). Use the DIRECT_URL with port 5432." }
+# Show where we're reading from, never the password.
+Write-Host ("Source: " + ($DirectUrl -replace '//([^:/@]+):[^@]*@', '//$1:****@'))
 
 Write-Host ""
 Write-Host "This REPLACES everything in the Docker FlexiTrack database with the Supabase data." -ForegroundColor Yellow
 Write-Host "Supabase itself is only read, not changed." -ForegroundColor Yellow
-$answer = Read-Host "Type YES to continue"
-if ($answer -ne 'YES') { Write-Host "Cancelled."; exit 0 }
+if (-not $Yes) {
+  $answer = Read-Host "Type YES to continue"
+  if ($answer -ne 'YES') { Write-Host "Cancelled."; exit 0 }
+}
 
 $backupDir = Join-Path $root 'backups'
 New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
