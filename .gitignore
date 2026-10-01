@@ -12,3 +12,8 @@ dist/
 
 # Local log files
 logs/
+
+# Database dumps (contain personal data) - never commit
+backups/
+*.sql.gz
+supabase.sql
