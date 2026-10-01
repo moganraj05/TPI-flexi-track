@@ -1,0 +1,98 @@
+# FlexiTrack: backend API + HR web console + its own private Postgres.
+#
+#   First time:   copy .env.example to .env and fill it in, then make sure
+#                 backend/.env exists (JWT secret, email settings, ...)
+#   Start/update: docker compose up -d --build
+#   Logs:         docker compose logs -f backend
+#   Stop:         docker compose down        (data is kept in the volume)
+#
+# The project name prefixes every container, network and volume, so nothing
+# here can clash with the other apps on the shared server.
+name: flexitrack
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-flexitrack}
+      POSTGRES_USER: ${POSTGRES_USER:-flexitrack}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      TZ: Asia/Kolkata
+      PGTZ: Asia/Kolkata
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # No `ports:` on purpose: the database is reachable only from the
+    # backend over this app's private network, never from the host or the
+    # other apps.
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    logging: *logging
+
+  backend:
+    build: ./backend
+    image: flexitrack-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    # Secrets and app settings (JWT, email, OTP, rate limits). The values in
+    # `environment:` below take priority over anything in this file.
+    env_file: ./backend/.env
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      # Shift and poll times are calculated in server-local time: must be IST.
+      TZ: Asia/Kolkata
+      DATABASE_URL: postgresql://${POSTGRES_USER:-flexitrack}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-flexitrack}?schema=public
+      DIRECT_URL: postgresql://${POSTGRES_USER:-flexitrack}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-flexitrack}?schema=public
+      # One proxy hop: the web container's Nginx.
+      TRUST_PROXY: 1
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8080}
+    # Published so the mobile app can reach the API directly, as it does today.
+    ports:
+      - "${BACKEND_PORT:-5000}:5000"
+    networks: [internal]
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    logging: *logging
+
+  web:
+    build:
+      context: ./webfrontend
+      args:
+        VITE_API_URL: /api
+    image: flexitrack-web
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    networks: [internal]
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    logging: *logging
+
+networks:
+  internal:
+
+volumes:
+  pgdata:

@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { theme } from '../../theme';
-import { initials } from '../../utils/format';
-import { useAuth } from '../../context/AuthContext';
 import { useLiveStatus } from '../../context/LiveStatusContext';
+import { UserMenu } from './UserMenu';
 
 const TITLES = {
   dashboard: 'Overview',
@@ -24,7 +23,6 @@ function getScreenTitle(pathname) {
 
 export function Topbar() {
   const location = useLocation();
-  const { user } = useAuth();
   const { lastUpdated } = useLiveStatus();
   const [, setTick] = useState(0);
 
@@ -49,7 +47,7 @@ export function Topbar() {
         )}
       </div>
       <div style={theme.topbarRight}>
-        <div style={theme.avatar}>{initials(user?.name)}</div>
+        <UserMenu />
       </div>
     </header>
   );

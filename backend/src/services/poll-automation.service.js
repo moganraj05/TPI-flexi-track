@@ -17,6 +17,16 @@ const openDelayMinutes = () => Number(process.env.POLL_OPEN_AFTER_SHIFT_MINUTES)
 // slack against openDelayMinutes+closeBeforeHours, so this stays valid for
 // every shift; see backend/src/utils/shift.js's getPollWindow.
 const closeBeforeHours = () => Number(process.env.POLL_CLOSE_BEFORE_NEXT_SHIFT_HOURS) || 1;
+// Catch-up for a missed window: the poll is only ever created by this
+// in-process ticker, so if the backend was down for a shift's whole
+// [opensAt, closesAt) window that day's poll was silently never created. When
+// the server comes back after closesAt but before the shift actually starts,
+// the poll is still created — opened immediately and kept open for this many
+// minutes (capped at the shift start) so workers still get to answer.
+const lateAnswerMinutes = () => Number(process.env.POLL_LATE_ANSWER_MINUTES) || 30;
+// Below this much time left before the shift starts, a late poll isn't worth
+// sending — nobody can realistically answer it.
+const LATE_MIN_ANSWER_MS = 5 * 60 * 1000;
 
 const matchingWorkersWhere = (departmentId, shiftStart, shiftEnd) => ({
   departmentId,
@@ -47,19 +57,32 @@ async function ensureShiftPoll({ departmentId, shiftStart, shiftEnd, now = new D
   });
 
   if (!window.valid) return null;
-  if (now < window.opensAt || now >= window.closesAt) return null;
+  if (now < window.opensAt || now >= window.nextStart) return null;
 
-  const workerCount = await prisma.user.count({ where: matchingWorkersWhere(departmentId, shiftStart, shiftEnd) });
-  if (workerCount === 0) return null;
+  // Past the normal close but before the shift starts: only a catch-up
+  // candidate (see lateAnswerMinutes) — decided after the existing-poll check
+  // below, since a poll that opened and closed on time also lands here.
+  const isLate = now >= window.closesAt;
+  let opensAt = window.opensAt;
+  let closesAt = window.closesAt;
+  if (isLate) {
+    opensAt = now;
+    closesAt = new Date(Math.min(window.nextStart.getTime(), now.getTime() + lateAnswerMinutes() * 60 * 1000));
+    if (closesAt.getTime() - now.getTime() < LATE_MIN_ANSWER_MS) return null;
+  }
 
   const pollDate = getStartOfDay(window.nextStart);
-  const shiftLabel = formatShiftName(shiftStart, shiftEnd);
 
   const existing = await prisma.poll.findFirst({
     where: { departmentId, shiftStart, shiftEnd, date: pollDate },
   });
 
   if (existing) return existing;
+
+  const workerCount = await prisma.user.count({ where: matchingWorkersWhere(departmentId, shiftStart, shiftEnd) });
+  if (workerCount === 0) return null;
+
+  const shiftLabel = formatShiftName(shiftStart, shiftEnd);
 
   try {
     const poll = await prisma.poll.create({
@@ -72,8 +95,8 @@ async function ensureShiftPoll({ departmentId, shiftStart, shiftEnd, now = new D
         shiftStart,
         shiftEnd,
         status: 'open',
-        opensAt: window.opensAt,
-        closesAt: window.closesAt,
+        opensAt,
+        closesAt,
         autoCreated: true,
         sendReminder: true,
         reminderMinutesBefore: 30,
@@ -93,7 +116,8 @@ async function ensureShiftPoll({ departmentId, shiftStart, shiftEnd, now = new D
       pollId: poll.id,
       departmentId,
       shiftLabel,
-      closesAt: window.closesAt.toISOString(),
+      closesAt: closesAt.toISOString(),
+      late: isLate,
     });
 
     emitPollUpdate({ pollId: poll.id, departmentId, type: 'created' });

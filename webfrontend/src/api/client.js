@@ -17,7 +17,10 @@ export const client = axios.create({ baseURL });
 
 // Socket.IO connects to the server root, not the /api prefix — strip it off
 // whichever baseURL was resolved above so both stay in sync automatically.
-export const socketURL = baseURL.replace(/\/api\/?$/, '');
+// A relative VITE_API_URL ("/api", the Docker setup where Nginx serves this
+// page and proxies the backend) strips down to "" — socket.io treats that as
+// a bare "http://" with no host, so fall back to this page's own origin.
+export const socketURL = baseURL.replace(/\/api\/?$/, '') || window.location.origin;
 
 client.interceptors.request.use((config) => {
   const token = getToken();
