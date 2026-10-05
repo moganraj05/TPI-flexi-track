@@ -169,8 +169,8 @@ export function Workforce() {
             key={`${dept.id}-${statusFilter}`}
             dept={dept}
             statusFilter={statusFilter}
-            onOpenWorker={(id) => navigate(`/app/workforce/worker/${id}`)}
-            onOpenIncharge={(id) => navigate(`/app/workforce/incharge/${id}`)}
+            onOpenWorker={(id) => navigate(`/staff/app/workforce/worker/${id}`)}
+            onOpenIncharge={(id) => navigate(`/staff/app/workforce/incharge/${id}`)}
             onEdit={(member) => setFormTarget({ mode: 'edit', member })}
             onDeactivate={setDeactivateTarget}
             onReactivate={setReactivateTarget}
@@ -182,7 +182,7 @@ export function Workforce() {
             key={`${dept.id}-${statusFilter}`}
             dept={dept}
             statusFilter={statusFilter}
-            onOpenIncharge={(id) => navigate(`/app/workforce/incharge/${id}`)}
+            onOpenIncharge={(id) => navigate(`/staff/app/workforce/incharge/${id}`)}
             onEdit={(member) => setFormTarget({ mode: 'edit', member })}
             onDeactivate={setDeactivateTarget}
             onReactivate={setReactivateTarget}

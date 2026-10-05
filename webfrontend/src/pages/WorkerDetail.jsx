@@ -94,7 +94,7 @@ export function WorkerDetail() {
           <RosterRow
             name={incharge.name}
             tag={memberShiftLabel(incharge)}
-            onClick={() => navigate(`/app/workforce/incharge/${incharge.id}`)}
+            onClick={() => navigate(`/staff/app/workforce/incharge/${incharge.id}`)}
           />
         </div>
       )}

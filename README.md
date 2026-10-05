@@ -4,88 +4,95 @@ Department-based Yes/No attendance poll for flexi workers in manufacturing.
 
 ## Stack
 
-- **Backend:** Node.js, Express, PostgreSQL via Prisma, Socket.IO (realtime), JWT auth
-- **Web (HR ops console):** React, Vite, TanStack Query, installable PWA
-- **Mobile:** Expo, React Native (worker + incharge app, LAN-discovery based — see note below)
+- **Backend:** Node.js, Express, PostgreSQL via Prisma, Socket.IO (realtime), JWT auth, Web Push
+- **Web (`webfrontend/`):** React, Vite, TanStack Query, installable web app (PWA). One site, two apps:
+  - **`/`** — worker / incharge app (the web version of the mobile app)
+  - **`/staff`** — HR / admin ops console
+- **Mobile (`mobile/`):** Expo, React Native — the Android APK, kept working while
+  everyone moves to the web app (separate git repo)
 
 ## Project Structure
 
 ```
 flexitrack/
-├── backend/       # API server (Express + Prisma/PostgreSQL + Socket.IO)
-├── webfrontend/   # HR ops console (React + Vite, PWA)
-└── mobile/        # Worker/incharge app (Expo) — separate git repo, see mobile/
+├── backend/       # API server (Express + Prisma/PostgreSQL + Socket.IO + Web Push)
+├── webfrontend/   # The website: worker/incharge app at "/", HR console at "/staff"
+│   └── src/mobile/   # worker/incharge app (web port of the Expo app)
+└── mobile/        # Expo Android app — separate git repo
 ```
+
+## Website addresses
+
+| Address | Who | What |
+|---|---|---|
+| `/login` | Workers, incharges, supervisors | Sign in with Employee ID + password |
+| `/home`, `/history`, `/profile` | Workers | Answer the shift poll, see past answers, settings |
+| `/incharge`, `/incharge/team`, `/incharge/poll/:id`, `/incharge/profile` | Incharges / supervisors | Polls dashboard, team management, poll report |
+| `/staff/login` | HR / admin | Sign in to the ops console |
+| `/staff/app/...` | HR / admin | Dashboard, live board, attendance, workforce, reports, settings |
+
+`/` sends everyone to their own home after sign-in. Old HR links (`/app/...`,
+`/register`, `/forgot-password`) redirect to the same page under `/staff`.
+The two apps keep separate sign-ins, so signing out of one never signs you
+out of the other. HR/admin accounts can't sign in on `/login`: they get a
+message pointing to `/staff/login`.
 
 ## Prerequisites
 
-- Node.js 18+
-- A PostgreSQL database (a connection string is all that's needed — Supabase, RDS, a local instance, etc.)
+- Node.js 20+
+- A PostgreSQL database (a connection string is all that's needed)
 
-## Backend Setup
+## Local development
 
 ```bash
+# backend
 cd backend
-npm install            # postinstall runs `prisma generate` automatically
-cp .env.example .env   # if .env doesn't exist — fill in DATABASE_URL/DIRECT_URL/JWT_SECRET at minimum
-npx prisma migrate deploy   # applies any pending schema migrations (safe to re-run; no-op if already up to date)
-npm run seed:design    # optional — seeds demo departments/workers/polls for local testing
-npm run dev            # starts API on http://localhost:5000
-```
+npm install            # postinstall runs `prisma generate`
+cp .env.example .env   # fill in DATABASE_URL/DIRECT_URL/JWT_SECRET at minimum
+npx prisma migrate deploy
+npm run seed:design    # optional: demo plant/workers/polls (WIPES the database it points at)
+npm run dev            # API on http://localhost:5000
 
-## Mobile App Setup
-
-```bash
-cd mobile
+# website (second terminal)
+cd webfrontend
 npm install
-npm start
+npm run dev            # http://localhost:5174  (worker app at /, HR console at /staff)
 ```
 
-Then press `w` for web, or scan QR for Expo Go on your phone.
+Demo logins after `seed:design`: worker `EMP1042`, incharge `INC001` (password
+`password123`) at `/login`; HR `hr.admin@flexitrack.com` / `password123` at
+`/staff/login`. In development the worker login also shows one-tap demo buttons.
 
-### API URL for physical device
+## Notifications (Web Push)
 
-The mobile app finds the backend itself — no URL to configure. It scans the
-phone's own LAN/hotspot subnet for a host answering `/api/health` (see
-`mobile/services/serverDiscovery.ts`) and caches whatever it finds. If
-auto-discovery can't find it (e.g. an unusual subnet), the app's login screen
-has a manual "server IP" override. This assumes the backend is reachable
-directly by IP on **port 5000** on the same local network as the phone — see
-"Mobile app constraints" below.
+Workers get an alert when their poll opens and a reminder before it closes;
+incharges get the final head count when one of their polls closes. They are
+delivered to every device the person turned them on for (Profile →
+Notifications), and to the Android APK as before.
 
-## Test Employee Accounts
+1. Generate the server's key pair once: `cd backend && npm run push:vapid-keys`.
+2. Put both keys in `backend/.env` as `WEB_PUSH_VAPID_PUBLIC_KEY` /
+   `WEB_PUSH_VAPID_PRIVATE_KEY`, and a contact in `WEB_PUSH_SUBJECT`
+   (`mailto:...`). Keep the keys: changing them drops every browser's
+   subscription until its owner opens the app again.
+3. Restart the backend. Without keys the app runs normally and just shows
+   "Notifications are not set up yet".
 
-| Employee ID | Password    | Department  |
-|-------------|-------------|-------------|
-| EMP001      | password123 | Production  |
-| EMP002      | password123 | Production  |
-| EMP003      | password123 | Packing     |
+**Browser rules you cannot work around:**
 
-## Employee Features (Phase 1)
+- Notifications (and installing the app) only work on **`https://`** addresses,
+  or `http://localhost` for development. Opened as `http://<server-ip>:8080`,
+  the app works but says notifications need the https address. The site
+  needs a real domain with a certificate, or an internal certificate that
+  every phone trusts.
+- **iPhone (iOS 16.4+):** only after *Share → Add to Home Screen*, opened from
+  that icon. The Profile screen shows these steps.
+- **Android Chrome:** works in the browser and as an installed app.
+- The server needs outbound internet access to the browsers' push services
+  (Google FCM, Mozilla, Apple), as it already does for Expo push.
 
-- Login with Employee ID + password
-- View today's department poll
-- Answer **Yes** (coming) or **No** (not coming)
-- Change answer before poll closes
-- View response history
-- Profile and logout
-
-## API Endpoints (Employee)
-
-| Method | Endpoint                        | Description              |
-|--------|---------------------------------|--------------------------|
-| POST   | `/api/auth/login`               | Login                    |
-| GET    | `/api/auth/me`                  | Current user profile     |
-| GET    | `/api/employee/polls/today`     | Today's open poll        |
-| POST   | `/api/employee/polls/:id/respond` | Submit Yes/No answer   |
-| GET    | `/api/employee/responses/mine`    | Response history         |
-
-## Next Steps
-
-- Supervisor dashboard
-- Super Admin panel
-- Push notifications
-- Auto-generated reports after poll closes
+Profile → Notifications has a **Send a test notification** button to check a
+phone end to end.
 
 ## Production Deployment
 
@@ -168,9 +175,11 @@ SPA fallback (any unmatched path → `index.html`) — the service worker
 automatically on every deploy since built assets are content-hashed, and
 purges its own old cache version on activate.
 
-### Mobile app constraints
+### Android APK (Expo) constraints
 
-The mobile app is built for a factory-LAN deployment, not a public-internet
+The web app (`/`) has none of these constraints: it uses the same address as the
+page. They apply only to the Android APK, kept working during the switch to
+the web app. The APK is built for a factory-LAN deployment, not a public-internet
 API: it discovers the backend by scanning the phone's own subnet for a host
 answering `/api/health` on a **hardcoded port 5000**. This means:
 

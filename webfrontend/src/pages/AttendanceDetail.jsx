@@ -60,7 +60,7 @@ export function AttendanceDetail() {
 
   return (
     <>
-      <button onClick={() => navigate('/app/attendance')} style={theme.backBtn}>
+      <button onClick={() => navigate('/staff/app/attendance')} style={theme.backBtn}>
         ← Back to attendance
       </button>
 
@@ -116,7 +116,7 @@ export function AttendanceDetail() {
               return (
                 <tr key={r.id} style={theme.tr}>
                   <td style={theme.td}>
-                    <NameLinkButton onClick={() => navigate(`/app/workforce/worker/${r.id}`)}>{r.name}</NameLinkButton>
+                    <NameLinkButton onClick={() => navigate(`/staff/app/workforce/worker/${r.id}`)}>{r.name}</NameLinkButton>
                   </td>
                   <td style={theme.td}>
                     {r.equipment} · {r.process}

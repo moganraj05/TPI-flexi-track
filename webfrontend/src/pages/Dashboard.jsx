@@ -75,7 +75,7 @@ export function Dashboard() {
         ) : (
           <div style={page.liveGrid}>
             {livePolls.map((poll) => (
-              <LiveOperationCard key={poll.id} poll={poll} onOpen={() => navigate(`/app/attendance/${poll.id}`)} />
+              <LiveOperationCard key={poll.id} poll={poll} onOpen={() => navigate(`/staff/app/attendance/${poll.id}`)} />
             ))}
           </div>
         )}
@@ -89,7 +89,7 @@ export function Dashboard() {
               key={dept.id}
               dept={dept}
               isLast={i === byDepartment.length - 1}
-              onOpen={() => navigate(`/app/workforce?plant=${dept.id}`)}
+              onOpen={() => navigate(`/staff/app/workforce?plant=${dept.id}`)}
             />
           ))}
         </div>
@@ -104,7 +104,7 @@ export function Dashboard() {
                 key={poll.id}
                 poll={poll}
                 isLast={i === Math.min(recentClosed.length, 6) - 1}
-                onOpen={() => navigate(`/app/attendance/${poll.id}`)}
+                onOpen={() => navigate(`/staff/app/attendance/${poll.id}`)}
               />
             ))}
           </div>

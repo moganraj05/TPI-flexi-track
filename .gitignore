@@ -17,3 +17,6 @@ logs/
 backups/
 *.sql.gz
 supabase.sql
+
+# Playwright MCP browser-test output
+.playwright-mcp/

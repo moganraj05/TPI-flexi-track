@@ -29,6 +29,33 @@ const pushTokenBody = z.object({
   pushToken: z.string().startsWith('ExponentPushToken[', 'Invalid push token format'),
 });
 
+// ---- web push ----
+// The endpoint is a URL this server will later POST to, so it must belong
+// to a real browser push service — otherwise any signed-in user could make
+// the server send requests to an address of their choosing.
+const PUSH_SERVICE_HOST_SUFFIXES = ['.googleapis.com', '.mozilla.com', '.mozaws.net', '.windows.com', '.push.apple.com'];
+const isPushServiceEndpoint = (value) => {
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    return url.protocol === 'https:' && PUSH_SERVICE_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix));
+  } catch {
+    return false;
+  }
+};
+const pushEndpoint = () =>
+  z.string().max(2048).refine(isPushServiceEndpoint, "This browser's push service is not supported");
+
+const webPushSubscriptionBody = z.object({
+  endpoint: pushEndpoint(),
+  keys: z.object({
+    p256dh: z.string().min(1).max(512),
+    auth: z.string().min(1).max(256),
+  }),
+});
+
+const webPushEndpointBody = z.object({ endpoint: pushEndpoint() });
+
 // ---- employee ----
 const pollIdParam = z.object({ pollId: uuid('poll ID') });
 
@@ -187,6 +214,8 @@ const approveHrAdminBody = z.object({ role: z.enum(['hr', 'admin', 'superadmin']
 module.exports = {
   workerLoginBody,
   pushTokenBody,
+  webPushSubscriptionBody,
+  webPushEndpointBody,
   pollIdParam,
   respondBody,
   workerIdParam,

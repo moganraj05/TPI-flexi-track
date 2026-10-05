@@ -4,6 +4,8 @@ const { comparePassword } = require('../utils/password');
 const { formatDept } = require('../utils/pollReport');
 const logger = require('../utils/logger');
 
+const WORKER_APP_ROLES = ['worker', 'incharge', 'supervisor'];
+
 const formatUser = (user) => ({
   id: user.id,
   employeeId: user.employeeId,
@@ -41,6 +43,19 @@ exports.login = async (req, res, next) => {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 
+    // This login serves the worker/incharge app only. HR and admin accounts
+    // have no screens there; they sign in at the staff console instead.
+    // Checked after the password so this answer can't be used to probe which
+    // employee IDs belong to HR accounts.
+    if (!WORKER_APP_ROLES.includes(user.role)) {
+      logger.warn('auth.login_failed', { employeeId: normalizedId, userId: user.id, reason: 'staff_account' });
+      return res.status(403).json({
+        success: false,
+        message: 'This is an HR/admin account. Please sign in at the staff console (/staff/login).',
+        data: { staffLogin: '/staff/login' },
+      });
+    }
+
     const token = signToken(user);
     logger.info('auth.login_succeeded', { userId: user.id, role: user.role });
 
@@ -59,10 +74,16 @@ exports.getMe = async (req, res) => {
 
 exports.logout = async (req, res, next) => {
   try {
-    await prisma.user.update({
-      where: { id: req.user.id },
-      data: { tokenVersion: { increment: 1 } },
-    });
+    // Logout revokes every session of this user (tokenVersion), so every
+    // browser subscription goes with it — a signed-out phone must not keep
+    // showing this person's attendance alerts to whoever picks it up next.
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: req.user.id },
+        data: { tokenVersion: { increment: 1 } },
+      }),
+      prisma.webPushSubscription.deleteMany({ where: { userId: req.user.id } }),
+    ]);
     logger.info('auth.logout', { userId: req.user.id });
     res.json({ success: true, message: 'Logged out' });
   } catch (error) {

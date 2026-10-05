@@ -83,13 +83,13 @@ export function UserMenu() {
 
   const goSettings = () => {
     setOpen(false);
-    navigate('/app/settings');
+    navigate('/staff/app/settings');
   };
 
   const handleLogout = () => {
     setOpen(false);
     logout();
-    navigate('/login', { replace: true });
+    navigate('/staff/login', { replace: true });
   };
 
   const roleLabel = ROLE_LABELS[user?.role] || user?.role || '';

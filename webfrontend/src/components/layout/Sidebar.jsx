@@ -3,12 +3,12 @@ import { theme, navButtonStyle } from '../../theme';
 import brandMark from '../../assets/brand-mark.svg';
 
 const NAV = [
-  { to: '/app/dashboard', label: 'Dashboard' },
-  { to: '/app/live', label: 'Live Board' },
-  { to: '/app/attendance', label: 'Attendance' },
-  { to: '/app/workforce', label: 'Workforce' },
-  { to: '/app/reports', label: 'Reports' },
-  { to: '/app/settings', label: 'Settings' },
+  { to: '/staff/app/dashboard', label: 'Dashboard' },
+  { to: '/staff/app/live', label: 'Live Board' },
+  { to: '/staff/app/attendance', label: 'Attendance' },
+  { to: '/staff/app/workforce', label: 'Workforce' },
+  { to: '/staff/app/reports', label: 'Reports' },
+  { to: '/staff/app/settings', label: 'Settings' },
 ];
 
 export function Sidebar() {

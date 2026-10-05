@@ -106,11 +106,23 @@ async function ensureShiftPoll({ departmentId, shiftStart, shiftEnd, now = new D
     const populated = await prisma.poll.findUnique({ where: { id: poll.id }, include: { department: true } });
     const deptName = populated.department?.name || 'Your department';
 
-    await notifyShiftWorkers(departmentId, shiftStart, shiftEnd, {
-      title: 'Attendance Poll Open',
-      body: `${deptName}: Confirm Yes or No for your next ${shiftLabel} shift.`,
-      data: { pollId: poll.id, type: 'poll_created' },
-    });
+    // The poll already exists at this point, so a notification failure must
+    // not escape: it would abort processAllShiftPolls' loop and delay every
+    // other shift group's poll to a later tick. The senders themselves don't
+    // throw on push-service errors; this also covers a database error while
+    // looking up recipients.
+    try {
+      await notifyShiftWorkers(departmentId, shiftStart, shiftEnd, {
+        title: 'Attendance Poll Open',
+        body: `${deptName}: Confirm Yes or No for your next ${shiftLabel} shift.`,
+        data: { pollId: poll.id, type: 'poll_created' },
+        url: '/home',
+        tag: `poll-${poll.id}`,
+        ttlSeconds: Math.max(60, Math.floor((closesAt.getTime() - Date.now()) / 1000)),
+      });
+    } catch (notifyError) {
+      logger.error('push.poll_created_notify_failed', { pollId: poll.id, error: notifyError.message });
+    }
 
     logger.info('poll.auto_created', {
       pollId: poll.id,

@@ -1,7 +1,9 @@
 const prisma = require('../config/prisma');
 const { autoCloseExpiredPolls } = require('../utils/poll');
 const { hashPassword } = require('../utils/password');
-const { formatDept } = require('../utils/pollReport');
+const { formatDept, getPollSummary, summarizePolls } = require('../utils/pollReport');
+const { notificationChannelSelect, hasNotificationChannel } = require('../services/notification.service');
+const { notifyPollClosed } = require('../services/poll-notifications.service');
 const { parsePagination, buildMeta } = require('../utils/pagination');
 const { emitPollUpdate } = require('../realtime');
 const { DEFAULT_SHIFT_START, DEFAULT_SHIFT_END } = require('../utils/shift');
@@ -45,7 +47,8 @@ const formatTeamWorker = (worker, livePoll = null, liveAnswer = null) => ({
     worker.shiftStart || DEFAULT_SHIFT_START,
     worker.shiftEnd || DEFAULT_SHIFT_END
   ),
-  hasNotifications: !!(worker.pushToken && worker.pushToken.startsWith('ExponentPushToken[')),
+  // Reachable on at least one channel: the Android APK or a browser.
+  hasNotifications: hasNotificationChannel(worker),
   livePoll: livePoll
     ? {
         id: livePoll.id,
@@ -76,9 +79,9 @@ const teamWorkerSelect = {
   name: true,
   employeeId: true,
   phone: true,
-  pushToken: true,
   shiftStart: true,
   shiftEnd: true,
+  ...notificationChannelSelect,
 };
 
 async function findTeamWorker(workerId, scope) {
@@ -87,75 +90,6 @@ async function findTeamWorker(workerId, scope) {
     select: teamWorkerSelect,
   });
 }
-
-const getPollSummary = async (poll, departmentId) => {
-  const responses = await prisma.response.findMany({
-    where: { pollId: poll.id },
-    include: { user: { select: { id: true, name: true, employeeId: true } } },
-  });
-  const yes = responses.filter((r) => r.answer === 'yes');
-  const no = responses.filter((r) => r.answer === 'no');
-
-  const respondedUserIds = new Set(responses.map((r) => r.user.id));
-  const workerFilter = {
-    departmentId,
-    role: 'worker',
-    isActive: true,
-  };
-  if (poll.shiftStart && poll.shiftEnd) {
-    workerFilter.shiftStart = poll.shiftStart;
-    workerFilter.shiftEnd = poll.shiftEnd;
-  }
-
-  const allWorkers = await prisma.user.findMany({
-    where: workerFilter,
-    select: { id: true, name: true, employeeId: true },
-  });
-
-  const pendingWorkers = allWorkers
-    .filter((w) => !respondedUserIds.has(w.id))
-    .map((w) => ({ id: w.id, name: w.name, employeeId: w.employeeId }));
-
-  const totalWorkers = allWorkers.length;
-
-  const teamRoster = allWorkers.map((w) => {
-    const response = responses.find((r) => r.user.id === w.id);
-    if (!response) {
-      return {
-        id: w.id,
-        name: w.name,
-        employeeId: w.employeeId,
-        status: 'pending',
-        answer: null,
-        answeredAt: null,
-      };
-    }
-    return {
-      id: w.id,
-      name: w.name,
-      employeeId: w.employeeId,
-      status: response.answer === 'yes' ? 'coming' : 'not_coming',
-      answer: response.answer,
-      answeredAt: response.answeredAt,
-    };
-  });
-
-  return {
-    totalResponses: responses.length,
-    coming: yes.length,
-    notComing: no.length,
-    totalWorkers,
-    pending: pendingWorkers.length,
-    pendingWorkers,
-    teamRoster,
-    responses: responses.map((r) => ({
-      id: r.id,
-      answer: r.answer,
-      answeredAt: r.answeredAt,
-      user: { id: r.user.id, name: r.user.name, employeeId: r.user.employeeId },
-    })),
-  };
-};
 
 exports.getMyPolls = async (req, res, next) => {
   try {
@@ -185,12 +119,10 @@ exports.getMyPolls = async (req, res, next) => {
       }),
     ]);
 
-    const data = await Promise.all(
-      polls.map(async (poll) => {
-        const summary = await getPollSummary(poll, poll.departmentId);
-        return { ...formatPoll(poll), summary };
-      })
-    );
+    // One batched summary for the whole page (2 queries in total, rosters
+    // limited to this department) instead of 2 queries per poll.
+    const summaries = await summarizePolls(polls, { departmentId: deptId });
+    const data = polls.map((poll) => ({ ...formatPoll(poll), summary: summaries.get(poll.id) }));
 
     res.json({ success: true, data, meta: buildMeta(pagination, total) });
   } catch (error) {
@@ -238,9 +170,18 @@ exports.closePoll = async (req, res, next) => {
       return res.status(403).json({ success: false, message: 'This poll is not in your department' });
     }
 
-    await prisma.poll.update({ where: { id: poll.id }, data: { status: 'closed' } });
+    // Conditional, like the scheduled auto-close: only the call that actually
+    // flips open -> closed announces it, so a double tap (or a race with the
+    // scheduler) can't send the closed event and notification twice.
+    const { count } = await prisma.poll.updateMany({
+      where: { id: poll.id, status: 'open' },
+      data: { status: 'closed' },
+    });
 
-    emitPollUpdate({ pollId: poll.id, departmentId: poll.departmentId, type: 'closed' });
+    if (count === 1) {
+      emitPollUpdate({ pollId: poll.id, departmentId: poll.departmentId, type: 'closed' });
+      notifyPollClosed(poll.id, { excludeUserId: req.user.id });
+    }
 
     const populated = await prisma.poll.findUnique({ where: { id: poll.id }, include: pollInclude });
 
@@ -260,15 +201,7 @@ exports.getTeamWorkers = async (req, res, next) => {
     const [workers, livePolls] = await Promise.all([
       prisma.user.findMany({
         where: { ...teamScopeFor(req.user), role: 'worker', isActive: true },
-        select: {
-          id: true,
-          name: true,
-          employeeId: true,
-          phone: true,
-          pushToken: true,
-          shiftStart: true,
-          shiftEnd: true,
-        },
+        select: teamWorkerSelect,
         orderBy: { name: 'asc' },
       }),
       prisma.poll.findMany({
@@ -286,7 +219,7 @@ exports.getTeamWorkers = async (req, res, next) => {
         })
       : [];
 
-    const registered = workers.filter((w) => w.pushToken && w.pushToken.startsWith('ExponentPushToken[')).length;
+    const registered = workers.filter(hasNotificationChannel).length;
     const withLivePoll = workers.filter((w) => pollByShift.has(`${w.shiftStart}|${w.shiftEnd}`)).length;
 
     res.json({
@@ -435,7 +368,10 @@ exports.deleteTeamWorker = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Worker not found in your team' });
     }
 
-    await prisma.user.update({ where: { id: worker.id }, data: { isActive: false, pushToken: null } });
+    await prisma.user.update({
+      where: { id: worker.id },
+      data: { isActive: false, pushToken: null, webPushSubscriptions: { deleteMany: {} } },
+    });
 
     res.json({ success: true, message: 'Worker removed from your team' });
   } catch (error) {

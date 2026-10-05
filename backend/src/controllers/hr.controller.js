@@ -20,6 +20,7 @@ const { buildTeamBulkTemplate, parseTeamBulkFile } = require('../services/bulk-i
 const { signToken } = require('../utils/jwt');
 const { comparePassword, hashPassword, DUMMY_HASH } = require('../utils/password');
 const { emitPollUpdate, emitFollowUpUpdate } = require('../realtime');
+const { notificationChannelSelect, hasNotificationChannel, reachableWhere } = require('../services/notification.service');
 
 // Parses optional fromDate/toDate — same YYYY-MM-DD-only format and UTC
 // midnight convention the existing single `date` filter already uses (both
@@ -94,7 +95,7 @@ const formatWorker = (w) => ({
   shiftEnd: w.shiftEnd || null,
   shiftName: w.shiftName || '',
   isActive: w.isActive !== false,
-  hasNotifications: !!(w.pushToken && String(w.pushToken).startsWith('ExponentPushToken[')),
+  hasNotifications: hasNotificationChannel(w),
 });
 
 const summarizeLivePolls = async (polls) => {
@@ -166,7 +167,7 @@ const personSelect = {
   shiftEnd: true,
   shiftName: true,
   isActive: true,
-  pushToken: true,
+  ...notificationChannelSelect,
   department: { select: departmentSelect },
   incharge: { select: inchargeSelect },
 };
@@ -264,11 +265,9 @@ exports.getDashboard = async (req, res, next) => {
       countsByDepartment('incharge'),
       prisma.user.count({ where: { role: 'worker', isActive: true } }),
       prisma.user.count({ where: { role: 'incharge', isActive: true } }),
-      // Matches the previous truthiness check on pushToken (a stored empty
-      // string counted as "not notified", so it's excluded here too).
-      prisma.user.count({
-        where: { role: 'worker', isActive: true, pushToken: { not: null }, NOT: { pushToken: '' } },
-      }),
+      // Workers reachable on at least one channel: the Android APK (Expo
+      // token) or a browser / installed web app (Web Push subscription).
+      prisma.user.count({ where: { role: 'worker', isActive: true, ...reachableWhere } }),
       prisma.poll.findMany({
         where: { status: 'open', opensAt: { lte: now }, closesAt: { gt: now } },
         include: { department: true },
@@ -867,7 +866,10 @@ exports.updateTeamMember = async (req, res, next) => {
 
     if (isActive !== undefined) {
       data.isActive = !!isActive;
-      if (!data.isActive) data.pushToken = null;
+      if (!data.isActive) {
+        data.pushToken = null;
+        data.webPushSubscriptions = { deleteMany: {} };
+      }
     }
 
     if (password) {
@@ -908,7 +910,10 @@ exports.deactivateTeamMember = async (req, res, next) => {
       }
     }
 
-    await prisma.user.update({ where: { id: member.id }, data: { isActive: false, pushToken: null } });
+    await prisma.user.update({
+      where: { id: member.id },
+      data: { isActive: false, pushToken: null, webPushSubscriptions: { deleteMany: {} } },
+    });
 
     res.json({ success: true, message: `${member.role === 'worker' ? 'Worker' : 'Incharge'} deactivated` });
   } catch (error) {

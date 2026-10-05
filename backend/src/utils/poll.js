@@ -1,6 +1,7 @@
 const prisma = require('../config/prisma');
 const { emitPollUpdate } = require('../realtime');
 const logger = require('./logger');
+const { notifyPollClosed } = require('../services/poll-notifications.service');
 
 const isPollActive = (poll, now = new Date()) => {
   const opensAt = new Date(poll.opensAt);
@@ -48,6 +49,7 @@ const autoCloseExpiredPolls = async (filter = {}) => {
 
     logger.info('poll.auto_closed', { pollId: poll.id, departmentId: poll.departmentId });
     emitPollUpdate({ pollId: poll.id, departmentId: poll.departmentId, type: 'closed' });
+    notifyPollClosed(poll.id);
   }
 };
 

@@ -14,7 +14,7 @@ const TITLES = {
 };
 
 function getScreenTitle(pathname) {
-  const segments = pathname.replace(/^\/app\/?/, '').split('/').filter(Boolean);
+  const segments = pathname.replace(/^\/staff\/app\/?/, '').split('/').filter(Boolean);
   const [section, sub] = segments;
   if (section === 'workforce' && sub === 'worker') return 'Worker details';
   if (section === 'workforce' && sub === 'incharge') return 'Incharge details';

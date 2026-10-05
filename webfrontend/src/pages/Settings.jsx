@@ -244,7 +244,7 @@ function SessionCard() {
 
   const handleLogout = () => {
     logout();
-    navigate('/login', { replace: true });
+    navigate('/staff/login', { replace: true });
   };
 
   return (

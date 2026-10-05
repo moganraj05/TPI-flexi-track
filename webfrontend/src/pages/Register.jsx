@@ -129,7 +129,7 @@ export function Register() {
 
             <div style={{ marginTop: 16, fontSize: 13, color: theme.mutedColor, textAlign: 'center' }}>
               Already have an account?{' '}
-              <Link to="/login" style={authLinkStyle}>
+              <Link to="/staff/login" style={authLinkStyle}>
                 Sign in
               </Link>
             </div>
@@ -166,7 +166,7 @@ export function Register() {
               <br />
               You'll get an email at <b>{form.email.trim().toLowerCase()}</b> once it's approved.
             </div>
-            <Link to="/login" className="ft-btn" style={{ ...theme.primaryBtn, display: 'block', textDecoration: 'none', textAlign: 'center' }}>
+            <Link to="/staff/login" className="ft-btn" style={{ ...theme.primaryBtn, display: 'block', textDecoration: 'none', textAlign: 'center' }}>
               Back to sign in
             </Link>
           </div>

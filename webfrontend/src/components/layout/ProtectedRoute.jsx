@@ -14,7 +14,7 @@ export function ProtectedRoute({ children }) {
   }
 
   if (status === 'guest') {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/staff/login" replace />;
   }
 
   return children;

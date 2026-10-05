@@ -164,7 +164,7 @@ export function LiveBoard() {
               <RosterSection
                 key={selectedPoll.id}
                 poll={selectedPoll}
-                onOpenWorker={(id) => navigate(`/app/workforce/worker/${id}`)}
+                onOpenWorker={(id) => navigate(`/staff/app/workforce/worker/${id}`)}
                 onMark={(person, answer) => setMarkTarget({ poll: selectedPoll, person, answer })}
               />
             </>

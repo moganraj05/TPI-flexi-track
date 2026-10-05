@@ -123,7 +123,7 @@ export function Attendance() {
                     <td style={{ ...theme.td, color: WARNING }}>{poll.summary.pending}</td>
                     <td style={{ ...theme.td, fontWeight: 700 }}>{poll.summary.attendanceRate}%</td>
                     <td style={theme.td}>
-                      <button onClick={() => navigate(`/app/attendance/${poll.id}`)} style={theme.ghostBtn}>
+                      <button onClick={() => navigate(`/staff/app/attendance/${poll.id}`)} style={theme.ghostBtn}>
                         View
                       </button>
                     </td>

@@ -56,8 +56,9 @@ const buildSummary = (responses, allWorkers) => {
 
   const pendingWorkers = allWorkers.filter((w) => !respondedUserIds.has(w.id)).map((w) => rosterFields(w));
 
+  const responseByUser = new Map(responses.filter((r) => r.user).map((r) => [r.user.id, r]));
   const teamRoster = allWorkers.map((w) => {
-    const response = responses.find((r) => r.user && r.user.id === w.id);
+    const response = responseByUser.get(w.id);
     if (!response) {
       return { ...rosterFields(w), status: 'pending', answer: null, answeredAt: null };
     }
@@ -123,7 +124,9 @@ const getPollSummary = async (poll, departmentId) => {
 // over here: it avoids flooding the (deliberately small, PgBouncer-backed)
 // Postgres connection pool with dozens of parallel query pairs, and it's a
 // straight latency win since summary output is identical either way.
-const summarizePolls = async (polls) => {
+// Pass { departmentId } when every poll is from one department (the incharge
+// app) so only that department's roster is loaded, not the whole company's.
+const summarizePolls = async (polls, { departmentId } = {}) => {
   const result = new Map();
   if (polls.length === 0) return result;
 
@@ -133,7 +136,10 @@ const summarizePolls = async (polls) => {
       where: { pollId: { in: pollIds } },
       include: { user: { select: responseUserSelect } },
     }),
-    prisma.user.findMany({ where: { role: 'worker', isActive: true }, select: workerSelect }),
+    prisma.user.findMany({
+      where: { role: 'worker', isActive: true, ...(departmentId ? { departmentId } : {}) },
+      select: workerSelect,
+    }),
   ]);
 
   const responsesByPoll = new Map();

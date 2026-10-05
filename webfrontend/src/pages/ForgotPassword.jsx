@@ -85,7 +85,7 @@ export function ForgotPassword() {
             </button>
 
             <div style={{ marginTop: 16, fontSize: 13, textAlign: 'center' }}>
-              <Link to="/login" style={authLinkStyle}>
+              <Link to="/staff/login" style={authLinkStyle}>
                 ← Back to sign in
               </Link>
             </div>
@@ -120,7 +120,7 @@ export function ForgotPassword() {
             <div style={{ fontSize: 14, color: theme.textSecondary, lineHeight: 1.6, marginTop: 10 }}>
               Sign in with your new password. All other sessions have been signed out.
             </div>
-            <Link to="/login" className="ft-btn" style={{ ...theme.primaryBtn, display: 'block', textDecoration: 'none', textAlign: 'center' }}>
+            <Link to="/staff/login" className="ft-btn" style={{ ...theme.primaryBtn, display: 'block', textDecoration: 'none', textAlign: 'center' }}>
               Go to sign in
             </Link>
           </div>

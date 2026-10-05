@@ -41,7 +41,7 @@ export function Login() {
     setSubmitting(true);
     try {
       await login(email, password);
-      navigate('/app/dashboard', { replace: true });
+      navigate('/staff/app/dashboard', { replace: true });
     } catch (err) {
       setError(err.message || 'Could not sign in');
     } finally {
@@ -74,7 +74,7 @@ export function Login() {
 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
             <label style={theme.label}>Password</label>
-            <Link to="/forgot-password" style={{ ...authLinkStyle, fontSize: 12 }}>
+            <Link to="/staff/forgot-password" style={{ ...authLinkStyle, fontSize: 12 }}>
               Forgot password?
             </Link>
           </div>
@@ -100,8 +100,14 @@ export function Login() {
 
           <div style={{ marginTop: 16, fontSize: 13, color: theme.mutedColor, textAlign: 'center' }}>
             New HR user?{' '}
-            <Link to="/register" style={authLinkStyle}>
+            <Link to="/staff/register" style={authLinkStyle}>
               Create an account
+            </Link>
+          </div>
+          <div style={{ marginTop: 8, fontSize: 13, color: theme.mutedColor, textAlign: 'center' }}>
+            Worker or incharge?{' '}
+            <Link to="/login" style={authLinkStyle}>
+              Sign in here
             </Link>
           </div>
         </form>

@@ -13,6 +13,10 @@ export const clearToken = () => localStorage.removeItem(TOKEN_KEY);
 // still override this for unusual setups (backend on a different host).
 const baseURL = import.meta.env.VITE_API_URL || `http://${window.location.hostname}:5000/api`;
 
+// Shared with the worker/incharge app (src/mobile/api.js), which has its own
+// axios instance and token but talks to the same backend.
+export const apiBaseURL = baseURL;
+
 export const client = axios.create({ baseURL });
 
 // Socket.IO connects to the server root, not the /api prefix — strip it off

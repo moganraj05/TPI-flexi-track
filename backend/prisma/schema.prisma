@@ -94,8 +94,31 @@ model User {
   responses         Response[]
   followUpsAsWorker FollowUp[] @relation("FollowUpWorker")
   followUpsUpdated  FollowUp[] @relation("FollowUpUpdatedBy")
+  webPushSubscriptions WebPushSubscription[]
 
   @@map("users")
+}
+
+// One row per browser/installed-web-app that opted in to notifications
+// (Web Push). Unlike the Expo `pushToken` column above — one native app per
+// user — a person can be subscribed from several browsers at once, so this
+// is its own table. `endpoint` is the push service URL the browser handed
+// out; it identifies the subscription and is unique across all users (the
+// same browser re-subscribing under a different login moves the row).
+model WebPushSubscription {
+  id            String    @id @default(uuid()) @db.Uuid
+  userId        String    @map("user_id") @db.Uuid
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint      String    @unique
+  p256dh        String
+  auth          String
+  userAgent     String?   @map("user_agent")
+  lastSuccessAt DateTime? @map("last_success_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@map("web_push_subscriptions")
 }
 
 model Poll {

@@ -1,6 +1,6 @@
 const crypto = require('node:crypto');
 const prisma = require('../config/prisma');
-const { sendPushNotifications } = require('./notification.service');
+const { notifyUsers } = require('./notification.service');
 const { autoCloseExpiredPolls } = require('../utils/poll');
 const logger = require('../utils/logger');
 
@@ -13,41 +13,33 @@ const matchingShift = (poll) => {
   return {};
 };
 
-const getPendingWorkersWithTokens = async (pollId, departmentId, poll) => {
-  const responded = await prisma.response.findMany({ where: { pollId }, select: { userId: true } });
-  const respondedUserIds = responded.map((r) => r.userId);
-  return prisma.user.findMany({
-    where: {
-      departmentId,
-      role: 'worker',
-      isActive: true,
-      ...matchingShift(poll),
-      id: { notIn: respondedUserIds },
-      NOT: [{ pushToken: null }, { pushToken: '' }],
-    },
-    select: { pushToken: true, name: true, employeeId: true },
-  });
+// Workers on this poll's roster who haven't answered yet — reached on every
+// channel they have (APK and/or browsers), see notifyUsers.
+const pendingWorkersWhere = async (poll) => {
+  const responded = await prisma.response.findMany({ where: { pollId: poll.id }, select: { userId: true } });
+  return {
+    departmentId: poll.departmentId,
+    role: 'worker',
+    isActive: true,
+    ...matchingShift(poll),
+    id: { notIn: responded.map((r) => r.userId) },
+  };
 };
 
 const sendPollReminder = async (poll) => {
-  const deptId = poll.departmentId;
   const deptName = poll.department?.name || 'Your department';
   const minutesBefore = poll.reminderMinutesBefore || DEFAULT_REMINDER_MINUTES;
 
-  const pendingWorkers = await getPendingWorkersWithTokens(poll.id, deptId, poll);
-  const tokens = pendingWorkers.map((w) => w.pushToken);
-
-  if (tokens.length === 0) {
-    return { sent: 0, failed: 0, targeted: 0 };
-  }
-
-  const result = await sendPushNotifications(tokens, {
+  const result = await notifyUsers(await pendingWorkersWhere(poll), {
     title: 'Attendance Reminder',
     body: `${deptName}: "${poll.title}" closes in ${minutesBefore} minutes. Please respond Yes or No.`,
     data: { pollId: poll.id, type: 'poll_reminder' },
+    url: '/home',
+    tag: `poll-${poll.id}`,
+    ttlSeconds: Math.max(60, Math.floor((new Date(poll.closesAt).getTime() - Date.now()) / 1000)),
   });
 
-  return { ...result, targeted: pendingWorkers.length };
+  return { sent: result.sent, failed: result.failed, targeted: result.targeted };
 };
 
 const processPollReminders = async () => {

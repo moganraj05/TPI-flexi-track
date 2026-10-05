@@ -14,6 +14,7 @@ const authRoutes = require('./routes/auth.routes');
 const employeeRoutes = require('./routes/employee.routes');
 const inchargeRoutes = require('./routes/incharge.routes');
 const hrRoutes = require('./routes/hr.routes');
+const pushRoutes = require('./routes/push.routes');
 const { startReminderScheduler } = require('./services/reminder.service');
 const { startPollAutomation } = require('./services/poll-automation.service');
 const { initRealtime } = require('./realtime');
@@ -88,6 +89,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/employee', employeeRoutes);
 app.use('/api/incharge', inchargeRoutes);
 app.use('/api/hr', hrRoutes);
+app.use('/api/push', pushRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ success: false, message: 'Not found', requestId: req.id });

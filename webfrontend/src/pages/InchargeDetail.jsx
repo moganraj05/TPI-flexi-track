@@ -65,7 +65,7 @@ export function InchargeDetail() {
               {workers.map((w) => (
                 <tr key={w.id} style={theme.tr}>
                   <td style={theme.td}>
-                    <NameLinkButton onClick={() => navigate(`/app/workforce/worker/${w.id}`)}>{w.name}</NameLinkButton>
+                    <NameLinkButton onClick={() => navigate(`/staff/app/workforce/worker/${w.id}`)}>{w.name}</NameLinkButton>
                   </td>
                   <td style={{ ...theme.td, fontFamily: theme.mono }}>{w.employeeId}</td>
                   <td style={theme.td}>
