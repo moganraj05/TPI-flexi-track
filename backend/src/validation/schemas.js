@@ -211,7 +211,18 @@ const forgotPasswordBody = z.object({ email: emailField() });
 
 const approveHrAdminBody = z.object({ role: z.enum(['hr', 'admin', 'superadmin'], { message: 'Invalid role' }).optional() });
 
+// HR "send a notification" (demo / announcements). Target-specific fields
+// are checked in the controller, where the plant/worker lookup happens.
+const sendNotificationBody = z.object({
+  target: z.enum(['all', 'plant', 'worker'], { message: 'Choose who to send to' }),
+  departmentId: z.string().uuid('Choose a plant').optional(),
+  employeeId: z.string().trim().max(40).optional(),
+  title: z.string().trim().min(1, 'Title is required').max(80, 'Title is too long (80 characters max)'),
+  message: z.string().trim().min(1, 'Message is required').max(240, 'Message is too long (240 characters max)'),
+});
+
 module.exports = {
+  sendNotificationBody,
   workerLoginBody,
   pushTokenBody,
   webPushSubscriptionBody,

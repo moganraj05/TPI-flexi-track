@@ -20,7 +20,8 @@ const { buildTeamBulkTemplate, parseTeamBulkFile } = require('../services/bulk-i
 const { signToken } = require('../utils/jwt');
 const { comparePassword, hashPassword, DUMMY_HASH } = require('../utils/password');
 const { emitPollUpdate, emitFollowUpUpdate } = require('../realtime');
-const { notificationChannelSelect, hasNotificationChannel, reachableWhere } = require('../services/notification.service');
+const logger = require('../utils/logger');
+const { notificationChannelSelect, hasNotificationChannel, reachableWhere, notifyUsers } = require('../services/notification.service');
 
 // Parses optional fromDate/toDate — same YYYY-MM-DD-only format and UTC
 // midnight convention the existing single `date` filter already uses (both
@@ -1488,6 +1489,64 @@ exports.updateFollowUp = async (req, res, next) => {
     emitFollowUpUpdate({ pollId, workerId });
 
     res.json({ success: true, message: 'Follow-up updated', data: record });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Sends a free-text notification from HR to workers' phones (browser /
+// installed web app and the Android APK) — for demos and announcements.
+// Goes to every channel each targeted worker has; workers who never turned
+// notifications on are counted but can't be reached.
+exports.sendWorkerNotification = async (req, res, next) => {
+  try {
+    const { target, departmentId, employeeId, title, message } = req.body;
+    const where = { role: 'worker', isActive: true };
+    let targetLabel = 'all workers';
+
+    if (target === 'plant') {
+      if (!departmentId) return res.status(400).json({ success: false, message: 'Choose a plant' });
+      const dept = await prisma.department.findFirst({ where: { id: departmentId, isActive: true }, select: { name: true } });
+      if (!dept) return res.status(404).json({ success: false, message: 'Plant not found' });
+      where.departmentId = departmentId;
+      targetLabel = `workers of ${dept.name}`;
+    } else if (target === 'worker') {
+      const id = String(employeeId || '').trim().toUpperCase();
+      if (!id) return res.status(400).json({ success: false, message: 'Enter the worker’s Employee ID' });
+      const worker = await prisma.user.findFirst({ where: { ...where, employeeId: id }, select: { id: true, name: true } });
+      if (!worker) return res.status(404).json({ success: false, message: `No active worker with Employee ID ${id}` });
+      where.id = worker.id;
+      targetLabel = `${worker.name} (${id})`;
+    }
+
+    const result = await notifyUsers(where, {
+      title,
+      body: message,
+      data: { type: 'hr_message' },
+      url: '/home',
+      tag: `hr-message-${Date.now()}`,
+      ttlSeconds: 12 * 60 * 60,
+    });
+
+    logger.info('push.hr_message_sent', {
+      target,
+      teamSize: result.teamSize,
+      reachable: result.targeted,
+      sent: result.sent,
+      failed: result.failed,
+    });
+
+    res.json({
+      success: true,
+      message: result.sent > 0 ? `Sent to ${targetLabel}` : `Nobody in ${targetLabel} has notifications turned on`,
+      data: {
+        targetLabel,
+        workers: result.teamSize,
+        reachable: result.targeted,
+        devicesSent: result.sent,
+        devicesFailed: result.failed,
+      },
+    });
   } catch (error) {
     next(error);
   }

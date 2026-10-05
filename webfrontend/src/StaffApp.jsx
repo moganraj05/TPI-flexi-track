@@ -30,6 +30,7 @@ const WorkerDetail = lazy(() => import('./pages/WorkerDetail').then((m) => ({ de
 const InchargeDetail = lazy(() =>
   import('./pages/InchargeDetail').then((m) => ({ default: m.InchargeDetail }))
 );
+const Notifications = lazy(() => import('./pages/Notifications').then((m) => ({ default: m.Notifications })));
 const Reports = lazy(() => import('./pages/Reports').then((m) => ({ default: m.Reports })));
 const Settings = lazy(() => import('./pages/Settings').then((m) => ({ default: m.Settings })));
 
@@ -66,6 +67,7 @@ export default function StaffApp() {
             <Route path="workforce" element={<Workforce />} />
             <Route path="workforce/worker/:id" element={<WorkerDetail />} />
             <Route path="workforce/incharge/:id" element={<InchargeDetail />} />
+            <Route path="notifications" element={<Notifications />} />
             <Route path="reports" element={<Reports />} />
             <Route path="settings" element={<Settings />} />
           </Route>

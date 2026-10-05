@@ -22,6 +22,7 @@ const {
   passwordWithTicketBody,
   forgotPasswordBody,
   approveHrAdminBody,
+  sendNotificationBody,
 } = require('../validation/schemas');
 const {
   getRegistrationPlants,
@@ -66,6 +67,7 @@ const {
   exportDailyShiftsExcel,
   exportTeamBulkTemplate,
   importTeamBulk,
+  sendWorkerNotification,
 } = require('../controllers/hr.controller');
 
 const router = express.Router();
@@ -164,6 +166,7 @@ router.delete(
 
 router.get('/follow-ups', getFollowUps);
 router.patch('/follow-ups', validate({ body: updateFollowUpBody }), updateFollowUp);
+router.post('/notifications/send', sensitiveLimiter, validate({ body: sendNotificationBody }), sendWorkerNotification);
 router.get('/export/manpower.xlsx', exportManpowerExcel);
 router.get('/export/daily-shifts.xlsx', exportDailyShiftsExcel);
 

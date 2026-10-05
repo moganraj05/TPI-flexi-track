@@ -4,7 +4,13 @@ export function FilterChips({ options, value, onChange }) {
   return (
     <div style={theme.filterRow}>
       {options.map((opt) => (
-        <button key={opt.value} onClick={() => onChange(opt.value)} style={filterBtnStyle(value === opt.value)}>
+        <button
+          key={opt.value}
+          type="button"
+          aria-pressed={value === opt.value}
+          onClick={() => onChange(opt.value)}
+          style={filterBtnStyle(value === opt.value)}
+        >
           {opt.label}
         </button>
       ))}

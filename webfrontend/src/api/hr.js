@@ -266,3 +266,11 @@ export const downloadDailyShiftsExcel = async ({ department, date }) => {
   });
   downloadBlob(data, `FlexiTrack_HR_DailyShifts_${date}.xlsx`);
 };
+
+// Sends a free-text notification to workers' phones (demo / announcement).
+// target: 'all' | 'plant' (with departmentId) | 'worker' (with employeeId).
+// Returns { targetLabel, workers, reachable, devicesSent, devicesFailed }.
+export const sendWorkerNotification = async ({ target, departmentId, employeeId, title, message }) => {
+  const { data } = await client.post('/hr/notifications/send', { target, departmentId, employeeId, title, message });
+  return { message: data.message, ...data.data };
+};

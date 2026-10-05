@@ -9,6 +9,7 @@ const TITLES = {
   live: 'Live Board',
   attendance: 'Attendance',
   workforce: 'Workforce',
+  notifications: 'Notifications',
   reports: 'Reports & Exports',
   settings: 'Settings',
 };
@@ -21,7 +22,7 @@ function getScreenTitle(pathname) {
   return TITLES[section] || 'FlexiTrack';
 }
 
-export function Topbar() {
+export function Topbar({ sidebarCollapsed, onToggleSidebar }) {
   const location = useLocation();
   const { lastUpdated } = useLiveStatus();
   const [, setTick] = useState(0);
@@ -35,16 +36,33 @@ export function Topbar() {
 
   return (
     <header style={theme.topbar}>
-      <div>
-        <div style={{ fontSize: 19, fontWeight: 800, color: theme.textPrimary }}>{getScreenTitle(location.pathname)}</div>
-        {secondsAgo !== null && (
-          <div style={theme.liveRow}>
-            <span style={theme.liveDot} />
-            <span style={{ fontFamily: theme.mono, fontSize: 12, color: theme.textSecondary }}>
-              auto-refreshing · updated {secondsAgo}s ago
-            </span>
-          </div>
-        )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
+        <button
+          type="button"
+          onClick={onToggleSidebar}
+          className="ft-btn ft-btn-secondary"
+          aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          aria-expanded={!sidebarCollapsed}
+          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          style={{ ...theme.ghostBtn, padding: 7, display: 'inline-flex', flexShrink: 0 }}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M9 4v16" />
+            <path d={sidebarCollapsed ? 'm13 10 2 2-2 2' : 'm15 10-2 2 2 2'} />
+          </svg>
+        </button>
+        <div>
+          <div style={{ fontSize: 19, fontWeight: 800, color: theme.textPrimary }}>{getScreenTitle(location.pathname)}</div>
+          {secondsAgo !== null && (
+            <div style={theme.liveRow}>
+              <span style={theme.liveDot} />
+              <span style={{ fontFamily: theme.mono, fontSize: 12, color: theme.textSecondary }}>
+                auto-refreshing · updated {secondsAgo}s ago
+              </span>
+            </div>
+          )}
+        </div>
       </div>
       <div style={theme.topbarRight}>
         <UserMenu />
