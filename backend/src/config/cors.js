@@ -2,9 +2,26 @@
 // while it's still around). Mobile clients and server-to-server calls don't
 // send an Origin header at all, so they're unaffected by this — CORS is a
 // browser-only mechanism, this only ever gates fetch()/XHR from a web page.
+const logger = require('../utils/logger');
+
+// A browser's Origin header is always exactly "scheme://host[:port]" in
+// lower case, with no path and no trailing slash. Configured values are
+// normalised to that same form, so a value pasted from the address bar
+// ("https://site.vercel.app/", with quotes, or in mixed case) still matches
+// instead of silently blocking every request from that site.
+function normalizeOrigin(value) {
+  const cleaned = String(value || '').trim().replace(/^['"]|['"]$/g, '').trim();
+  if (!cleaned) return '';
+  try {
+    return new URL(cleaned).origin.toLowerCase();
+  } catch {
+    return cleaned.replace(/\/+$/, '').toLowerCase();
+  }
+}
+
 const configuredOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
   .split(',')
-  .map((origin) => origin.trim())
+  .map(normalizeOrigin)
   .filter(Boolean);
 
 // No explicit allowlist in production means "allow nothing" (fail closed) —
@@ -36,13 +53,28 @@ function isDevLanOrigin(origin) {
   }
 }
 
+// Logged once per rejected origin (not on every request) with the exact
+// address the browser sent and the list it was compared against — the
+// two things needed to fix a CORS_ALLOWED_ORIGINS mismatch.
+const reportedRejections = new Set();
+
 const corsOptions = {
   origin(origin, callback) {
-    if (!origin || allowedOrigins.includes(origin) || isDevLanOrigin(origin)) {
+    if (!origin || allowedOrigins.includes(normalizeOrigin(origin)) || isDevLanOrigin(origin)) {
       return callback(null, true);
+    }
+    if (!reportedRejections.has(origin)) {
+      reportedRejections.add(origin);
+      logger.warn('cors.origin_rejected', {
+        origin,
+        allowedOrigins,
+        fix: 'Add this exact origin to CORS_ALLOWED_ORIGINS (comma-separated) and restart.',
+      });
     }
     callback(new Error('Not allowed by CORS'));
   },
 };
+
+logger.info('cors.allowed_origins', { allowedOrigins });
 
 module.exports = { corsOptions, allowedOrigins };
