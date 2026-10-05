@@ -1,0 +1,79 @@
+# Render Blueprint for the FlexiTrack backend.
+# Render dashboard -> New -> Blueprint -> pick this repo: it creates the
+# service with every setting below, and asks for the values marked
+# `sync: false` (secrets / addresses that differ per deployment).
+services:
+  - type: web
+    name: flexitrack-api
+    runtime: node
+    rootDir: backend
+    # Starter or above: a free instance sleeps after 15 minutes idle, and
+    # while asleep no polls are created and no reminders are sent.
+    plan: starter
+    region: singapore
+    # Exactly one instance: the poll/reminder schedulers and Socket.IO
+    # assume a single process.
+    numInstances: 1
+    # --include=dev: the Prisma CLI (needed for migrations and `prisma
+    # generate`) is a devDependency, which `npm ci` skips when
+    # NODE_ENV=production.
+    buildCommand: npm ci --include=dev
+    # Applies pending database migrations on every start (no-op when
+    # already current), then starts the API.
+    startCommand: npx prisma migrate deploy && node src/index.js
+    healthCheckPath: /api/health/ready
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "20"
+      # Shift and poll times are calculated in server-local time.
+      - key: TZ
+        value: Asia/Kolkata
+      # Render sits one proxy hop in front of the app.
+      - key: TRUST_PROXY
+        value: "1"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 365d
+      # Postgres: pooled URL for the app, direct URL for migrations.
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      # The Vercel site address, e.g. https://flexitrack.vercel.app
+      # (comma-separate several; no trailing slash).
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      # Web Push keys: `npm run push:vapid-keys` in backend/, once.
+      - key: WEB_PUSH_VAPID_PUBLIC_KEY
+        sync: false
+      - key: WEB_PUSH_VAPID_PRIVATE_KEY
+        sync: false
+      - key: WEB_PUSH_SUBJECT
+        value: mailto:moganrajg@tii.murugappa.com
+      # Every phone on the factory Wi-Fi reaches Render from one public IP,
+      # so the per-IP limits must cover the whole workforce at shift change.
+      - key: RATE_LIMIT_LOGIN_MAX
+        value: "300"
+      - key: RATE_LIMIT_API_MAX
+        value: "5000"
+      - key: RATE_LIMIT_OTP_SEND_MAX
+        value: "30"
+      # Emails for HR sign-up / forgot password. "resend" sends over HTTPS
+      # (Render may block outgoing SMTP, which "gmail" needs).
+      - key: EMAIL_PROVIDER
+        value: resend
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM_ADDRESS
+        sync: false
+      - key: EMAIL_FROM_NAME
+        value: FlexiTrack
+      - key: HR_ALLOWED_EMAIL_DOMAINS
+        value: tii.murugappa.com
+      - key: POLL_OPEN_AFTER_SHIFT_MINUTES
+        value: "30"
+      - key: POLL_CLOSE_BEFORE_NEXT_SHIFT_HOURS
+        value: "1"

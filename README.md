@@ -94,6 +94,22 @@ Notifications), and to the Android APK as before.
 Profile → Notifications has a **Send a test notification** button to check a
 phone end to end.
 
+## Deploy: Render (backend) + Vercel (website)
+
+**Render** — New → Blueprint → this repo (uses `render.yaml`). Fill in when asked:
+`DATABASE_URL`, `DIRECT_URL`, `CORS_ALLOWED_ORIGINS` (the Vercel address),
+`WEB_PUSH_VAPID_PUBLIC_KEY` / `WEB_PUSH_VAPID_PRIVATE_KEY` (`npm run push:vapid-keys`),
+`RESEND_API_KEY`, `EMAIL_FROM_ADDRESS`. Keep the Starter plan (free instances
+sleep, and then no polls are created) and 1 instance.
+
+**Vercel** — Add New → Project → this repo. Root Directory `webfrontend`.
+Environment variable `VITE_API_URL=https://<render-service>.onrender.com/api`.
+Deploy (`webfrontend/vercel.json` handles page routing and the service worker).
+
+Then put the Vercel address in Render's `CORS_ALLOWED_ORIGINS`, and create the
+first admin by running `npm run seed:admin` with `backend/.env` pointing at the
+production database.
+
 ## Production Deployment
 
 ### Required environment variables (backend)
