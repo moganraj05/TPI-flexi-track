@@ -11,7 +11,16 @@ export const clearToken = () => localStorage.removeItem(TOKEN_KEY);
 // the backend on that same IP, instead of a hardcoded "localhost" that only
 // ever means the device the browser itself is running on. API_URL can
 // still override this for unusual setups (backend on a different host).
-const baseURL = import.meta.env.API_URL || `http://${window.location.hostname}:5000/api`;
+// Every backend route lives under /api, so a configured value without it
+// ("https://x.onrender.com" or "https://x.onrender.com/") gets it appended
+// instead of every request going to a non-existent path and failing with 404.
+const normalizeApiUrl = (value) => {
+  const trimmed = String(value || '').trim().replace(/\/+$/, '');
+  if (!trimmed) return '';
+  return /\/api$/.test(trimmed) ? trimmed : `${trimmed}/api`;
+};
+
+const baseURL = normalizeApiUrl(import.meta.env.API_URL) || `http://${window.location.hostname}:5000/api`;
 
 // Shared with the worker/incharge app (src/mobile/api.js), which has its own
 // axios instance and token but talks to the same backend.
