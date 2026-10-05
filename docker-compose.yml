@@ -77,7 +77,7 @@ services:
     build:
       context: ./webfrontend
       args:
-        VITE_API_URL: /api
+        API_URL: /api
     image: flexitrack-web
     restart: unless-stopped
     depends_on:

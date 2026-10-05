@@ -12,8 +12,8 @@ COPY . .
 # Same-origin API: the browser calls /api on whatever address served this
 # page, and Nginx below forwards it to the backend. The socket.io URL is
 # derived from this too (src/api/client.js), so live updates follow along.
-ARG VITE_API_URL=/api
-ENV VITE_API_URL=${VITE_API_URL}
+ARG API_URL=/api
+ENV API_URL=${API_URL}
 RUN npm run build
 
 FROM nginx:1.27-alpine

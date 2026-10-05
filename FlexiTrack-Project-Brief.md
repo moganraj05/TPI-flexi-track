@@ -188,7 +188,7 @@ JWT: `JWT_EXPIRES_IN=365d`. Poll timing env: `POLL_OPEN_AFTER_SHIFT_MINUTES=30`,
 **HR website deployment (requirements only)**
 
 - Build static files: `cd hr-new && npm ci && npm run build` → publish `hr-new/dist`.
-- Set `VITE_API_URL` to the public API origin **including `/api`** (example: `https://api.example.com/api`) **before** build.
+- Set `API_URL` to the public API origin **including `/api`** (example: `https://api.example.com/api`) **before** build.
 - Host as a SPA: every path must fall back to `index.html`.
 - API + MongoDB must already be running; the HR site does not include a server of its own.
 - Full checklist: `hr-new/CLAUDE.md` (Deployment requirements).
@@ -199,7 +199,7 @@ JWT: `JWT_EXPIRES_IN=365d`. Poll timing env: `POLL_OPEN_AFTER_SHIFT_MINUTES=30`,
 
 Use these as starting points when asking ChatGPT for advice:
 
-1. **Cloud production** of API + HR static site is not a locked hosting vendor — follow `hr-new` deployment requirements (static `dist`, `VITE_API_URL`, SPA fallback). Typical use is still PC + LAN + Atlas until IT assigns hosts.
+1. **Cloud production** of API + HR static site is not a locked hosting vendor — follow `hr-new` deployment requirements (static `dist`, `API_URL`, SPA fallback). Typical use is still PC + LAN + Atlas until IT assigns hosts.
 2. **No iOS app** focus; Android APK via EAS.
 3. **No real HR identity** (SSO, company email domain, 2FA) — sample `hr@tpi.local`.
 4. **No holiday / weekly-off calendar** — polls still auto-create after every shift end, including weekends unless someone changes process.

@@ -103,7 +103,7 @@ phone end to end.
 sleep, and then no polls are created) and 1 instance.
 
 **Vercel** — Add New → Project → this repo. Root Directory `webfrontend`.
-Environment variable `VITE_API_URL=https://<render-service>.onrender.com/api`.
+Environment variable `API_URL=https://<render-service>.onrender.com/api`.
 Deploy (`webfrontend/vercel.json` handles page routing and the service worker).
 
 Then put the Vercel address in Render's `CORS_ALLOWED_ORIGINS`, and create the
@@ -181,7 +181,7 @@ npm ci
 npm run build     # outputs static files to dist/
 ```
 
-Set `VITE_API_URL` at build time if the web frontend is ever served from a
+Set `API_URL` at build time if the web frontend is ever served from a
 different host than the backend (e.g. a separate domain, not the same
 machine on port 5000) — left unset, it defaults to
 `http://<the host the page was loaded from>:5000/api`, which only works when
