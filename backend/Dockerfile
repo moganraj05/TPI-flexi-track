@@ -20,7 +20,7 @@ RUN npm ci && npm cache clean --force
 
 COPY src ./src
 COPY docker-entrypoint.sh ./docker-entrypoint.sh
-RUN sed -i 's/\r$//' docker-entrypoint.sh && chmod +x docker-entrypoint.sh \
+RUN sed -i 's/\r$//' docker-entrypoint.sh && chmod +x docker-entrypoint.sh \~
   && chown -R node:node /app
 
 USER node
