@@ -9,6 +9,7 @@ import { useTeam } from '../../hooks';
 import { api } from '../../api';
 import { formatShiftLabel } from '../../utils';
 import { WorkerFormSheet } from './WorkerFormSheet';
+import { TempPasswordSheet } from './TempPasswordSheet';
 
 const NOTIFY_OPTIONS = [
   { value: 'all', label: 'All' },
@@ -37,6 +38,7 @@ export function InchargeTeam() {
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [newLogin, setNewLogin] = useState(null); // shown once after adding a worker
 
   const filtered = useMemo(() => {
     let list = [...workers];
@@ -65,15 +67,13 @@ export function InchargeTeam() {
           employeeId: values.employeeId,
           name: values.name,
           phone: values.phone,
-          password: values.password,
           shiftCode: values.shiftCode,
         });
         setTeam((list) => [...list, result.data].sort(byName));
-        toast(`Added ${result.data.name}`, result.data.employeeId);
+        setNewLogin(result.data);
       } else {
         const payload = { name: values.name, phone: values.phone };
         if (values.shiftCode) payload.shiftCode = values.shiftCode;
-        if (values.password) payload.password = values.password;
         const result = await api.updateTeamWorker(form.worker.id, payload);
         setTeam((list) => list.map((w) => (w.id === form.worker.id ? { ...w, ...result.data, livePoll: w.livePoll } : w)));
         toast(`Saved ${result.data.name}`, result.data.employeeId);
@@ -110,7 +110,7 @@ export function InchargeTeam() {
         onAdd={() => setForm({ open: true, mode: 'create', worker: null })}
       />
 
-      {query.isLoading ? (
+      {query.isPending ? (
         <Loading />
       ) : query.isError && !query.data ? (
         <div className="m-body">
@@ -173,6 +173,8 @@ export function InchargeTeam() {
         onSubmit={handleSubmit}
       />
 
+      <TempPasswordSheet login={newLogin} onClose={() => setNewLogin(null)} />
+
       <BottomSheet open={!!deleteTarget} onClose={() => !deleting && setDeleteTarget(null)} labelledBy="remove-worker-title">
         <span className="m-sheet-icon m-tint-stop">
           <Icon name="alert" size={26} />
@@ -234,6 +236,7 @@ function WorkerCard({ worker, onEdit, onDelete }) {
         <span className="m-tag">{worker.shiftLabel || formatShiftLabel(worker.shiftStart, worker.shiftEnd)}</span>
         <span className={`m-tag m-tag-${worker.hasNotifications ? 'go' : 'stop'}`}>{worker.hasNotifications ? 'Notify on' : 'Notify off'}</span>
         <span className={`m-tag m-tag-${pollTone}`}>{pollLabel}</span>
+        {worker.mustChangePassword ? <span className="m-tag m-tag-wait">Password not set</span> : null}
       </div>
     </li>
   );

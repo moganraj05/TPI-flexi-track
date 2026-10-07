@@ -15,6 +15,9 @@ import {
   deactivateHrAdmin,
   approveHrRegistration,
   rejectHrRegistration,
+  resendStaffInvite,
+  deleteHrAdmin,
+  requirePasswordChange,
 } from '../api/hr';
 import { theme, chipStyle, WARNING, WARNING_SOFT, DANGER } from '../theme';
 import { formatDateTime } from '../utils/format';
@@ -23,10 +26,10 @@ import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { Avatar } from '../components/common/Avatar';
 import { Badge } from '../components/common/Badge';
 import { Button } from '../components/common/Button';
+import { PasswordInput } from '../components/common/PasswordInput';
+import { roleTag, isAdminRole, ASSIGNABLE_ROLES } from '../utils/roles';
 
-const HR_ROLE_OPTIONS = ['hr', 'admin', 'superadmin'];
-const ROLE_LABELS = { hr: 'HR', admin: 'Admin', superadmin: 'Super admin', incharge: 'Incharge', supervisor: 'Supervisor', worker: 'Worker' };
-const roleLabel = (role) => ROLE_LABELS[role] || role || '—';
+const roleLabel = roleTag;
 
 // White field on the white card (the global theme.input uses the page's
 // blue-grey background, which read as heavy filled blocks inside a card).
@@ -44,8 +47,9 @@ export function Settings() {
         <SessionCard />
       </div>
       <div className="ft-settings-col">
-        <ManagePlants />
-        {user?.role !== 'hr' && <ManageHrAdmins currentUserId={user?.id} />}
+        <ManagePlants canManage={isAdminRole(user?.role)} />
+        {isAdminRole(user?.role) && <ManageHrAdmins currentUserId={user?.id} />}
+        {isAdminRole(user?.role) && <WorkerPasswordsCard />}
       </div>
     </div>
   );
@@ -59,10 +63,12 @@ function SettingsCard({ title, description, action, children, flush = false }) {
   return (
     <section style={{ ...theme.card, padding: 0, overflow: 'hidden' }}>
       <header
+        className="ft-card-head"
         style={{
           display: 'flex',
           alignItems: 'flex-start',
           justifyContent: 'space-between',
+          flexWrap: 'wrap',
           gap: 12,
           padding: '18px 22px',
           borderBottom: `1px solid ${theme.borderColor}`,
@@ -74,7 +80,7 @@ function SettingsCard({ title, description, action, children, flush = false }) {
         </div>
         {action && <div style={{ flexShrink: 0 }}>{action}</div>}
       </header>
-      <div style={flush ? undefined : { padding: '18px 22px 22px' }}>{children}</div>
+      <div className={flush ? undefined : 'ft-card-body'} style={flush ? undefined : { padding: '18px 22px 22px' }}>{children}</div>
     </section>
   );
 }
@@ -117,7 +123,7 @@ function ErrorText({ children }) {
 function ListItem({ children, last }) {
   return (
     <div
-      className="ft-settings-item"
+      className="ft-settings-item ft-list-item"
       style={{ padding: '14px 22px', borderBottom: last ? 'none' : `1px solid ${theme.borderColor}66` }}
     >
       {children}
@@ -147,7 +153,7 @@ function ProfileCard({ user }) {
           </div>
         </div>
       </div>
-      <dl style={{ margin: 0, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+      <dl style={{ margin: 0, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(180px, 100%), 1fr))', gap: 12 }}>
         <Detail label="Employee ID" value={user?.employeeId} mono />
         <Detail label="Email" value={user?.email} />
       </dl>
@@ -217,14 +223,14 @@ function ChangePasswordCard() {
     <SettingsCard title="Change password" description="Use at least 6 characters. You'll stay signed in on this browser.">
       <form onSubmit={handleSubmit}>
         <Field label="Current password">
-          <TextInput type="password" autoComplete="current-password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} required />
+          <PasswordInput className="ft-settings-input" style={inputStyle} autoComplete="current-password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} required />
         </Field>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', columnGap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(180px, 100%), 1fr))', columnGap: 12 }}>
           <Field label="New password">
-            <TextInput type="password" autoComplete="new-password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required />
+            <PasswordInput className="ft-settings-input" style={inputStyle} autoComplete="new-password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required />
           </Field>
           <Field label="Confirm new password">
-            <TextInput type="password" autoComplete="new-password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required />
+            <PasswordInput className="ft-settings-input" style={inputStyle} autoComplete="new-password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required />
           </Field>
         </div>
         <ErrorText>{error}</ErrorText>
@@ -248,7 +254,7 @@ function SessionCard() {
   };
 
   return (
-    <section style={{ ...theme.card, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', padding: '18px 22px' }}>
+    <section className="ft-card-head" style={{ ...theme.card, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', padding: '18px 22px' }}>
       <div>
         <div style={{ fontSize: 15.5, fontWeight: 800, color: theme.textPrimary }}>Sign out</div>
         <div style={{ fontSize: 12.5, color: theme.textSecondary, marginTop: 4 }}>End your session on this browser.</div>
@@ -264,10 +270,11 @@ function SessionCard() {
 // Admin column
 // ---------------------------------------------------------------------------
 
-function ManagePlants() {
+// Plants are configuration: admins add/edit/deactivate them; Staff see the list.
+function ManagePlants({ canManage }) {
   const toast = useToast();
   const queryClient = useQueryClient();
-  const { data: departments, isLoading } = useQuery({
+  const { data: departments, isPending: isLoading } = useQuery({
     queryKey: ['hr-departments'],
     queryFn: getDepartments,
     staleTime: 5 * 60 * 1000,
@@ -356,9 +363,10 @@ function ManagePlants() {
   return (
     <SettingsCard
       title="Plants"
-      description="Plants workers and incharges are assigned to."
+      description={canManage ? 'Plants workers and incharges are assigned to.' : 'Plants workers and incharges are assigned to. Only admins can change them.'}
       flush
       action={
+        canManage &&
         !showAdd && (
           <Button size="sm" onClick={() => setShowAdd(true)}>
             + Add plant
@@ -433,19 +441,21 @@ function ManagePlants() {
                   <span style={{ fontWeight: 700, fontSize: 14, color: theme.textPrimary }}>{dept.name}</span>
                   {!dept.isActive && <Badge>Inactive</Badge>}
                 </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <Button size="sm" variant="secondary" onClick={() => startEdit(dept)} disabled={busy}>
-                    Edit
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={dept.isActive ? 'secondary' : 'success'}
-                    onClick={() => (dept.isActive ? setDeactivateTarget(dept) : reactivate(dept))}
-                    disabled={busy}
-                  >
-                    {dept.isActive ? 'Deactivate' : 'Reactivate'}
-                  </Button>
-                </div>
+                {canManage && (
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <Button size="sm" variant="secondary" onClick={() => startEdit(dept)} disabled={busy}>
+                      Edit
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={dept.isActive ? 'secondary' : 'success'}
+                      onClick={() => (dept.isActive ? setDeactivateTarget(dept) : reactivate(dept))}
+                      disabled={busy}
+                    >
+                      {dept.isActive ? 'Deactivate' : 'Reactivate'}
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
           </ListItem>
@@ -460,10 +470,14 @@ function ManageHrAdmins({ currentUserId }) {
   const queryClient = useQueryClient();
   // HR/admin logins change only through this panel's own create/update/
   // deactivate actions, which already invalidate this key on every write.
-  const { data: admins, isLoading } = useQuery({
+  // Always fresh: the server also pushes a live "staff:update" event (see
+  // SocketContext) whenever a login changes — e.g. an invited person sets
+  // their password — and the list refetches when the tab is focused again.
+  const { data: admins, isPending: isLoading } = useQuery({
     queryKey: ['hr-admins'],
     queryFn: getHrAdmins,
-    staleTime: 5 * 60 * 1000,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
   });
 
   const [editingId, setEditingId] = useState(null);
@@ -477,11 +491,11 @@ function ManageHrAdmins({ currentUserId }) {
   const [newName, setNewName] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newPhone, setNewPhone] = useState('');
-  const [newPassword, setNewPassword] = useState('');
   const [newRole, setNewRole] = useState('hr');
   const [addError, setAddError] = useState('');
 
   const [deactivateTarget, setDeactivateTarget] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const [rejectTarget, setRejectTarget] = useState(null);
   const [approveRoles, setApproveRoles] = useState({});
 
@@ -523,11 +537,11 @@ function ManageHrAdmins({ currentUserId }) {
     setBusy(true);
     try {
       await updateHrAdmin(editingId, { name: editName, phone: editPhone });
-      toast('HR login updated');
+      toast('Login updated');
       setEditingId(null);
       refresh();
     } catch (err) {
-      setFormError(err.message || 'Could not update HR login');
+      setFormError(err.message || 'Could not update login');
     } finally {
       setBusy(false);
     }
@@ -537,18 +551,26 @@ function ManageHrAdmins({ currentUserId }) {
     setBusy(true);
     try {
       await updateHrAdmin(admin.id, { isActive: true });
-      toast('HR login reactivated');
+      toast('Login reactivated');
       refresh();
     } catch (err) {
-      toast(err.message || 'Could not reactivate HR login');
+      toast(err.message || 'Could not reactivate login');
     } finally {
       setBusy(false);
     }
   };
 
+  // Throws on failure so ConfirmDialog shows the error inline.
+  const confirmDelete = async () => {
+    const result = await deleteHrAdmin(deleteTarget.id);
+    toast(result.message || 'Login deleted', 'success');
+    setDeleteTarget(null);
+    refresh();
+  };
+
   const confirmDeactivate = async () => {
     await deactivateHrAdmin(deactivateTarget.id);
-    toast('HR login deactivated');
+    toast('Login deactivated');
     setDeactivateTarget(null);
     refresh();
   };
@@ -556,63 +578,80 @@ function ManageHrAdmins({ currentUserId }) {
   const addAdmin = async (e) => {
     e.preventDefault();
     setAddError('');
-    if (!newEmployeeId.trim() || !newName.trim() || !newEmail.trim() || !newPassword) {
-      setAddError('Employee ID, name, email and password are required');
-      return;
-    }
-    if (newPassword.length < 6) {
-      setAddError('Password must be at least 6 characters');
+    if (!newEmployeeId.trim() || !newName.trim() || !newEmail.trim()) {
+      setAddError('Employee ID, name and email are required');
       return;
     }
     setBusy(true);
     try {
-      await createHrAdmin({
+      const result = await createHrAdmin({
         employeeId: newEmployeeId,
         name: newName,
         email: newEmail,
         phone: newPhone,
-        password: newPassword,
         role: newRole,
       });
-      toast('HR login created');
+      toast(result.message, result.login.invitationEmailed ? 'success' : 'error');
       setNewEmployeeId('');
       setNewName('');
       setNewEmail('');
       setNewPhone('');
-      setNewPassword('');
       setNewRole('hr');
       setShowAdd(false);
       refresh();
     } catch (err) {
-      setAddError(err.message || 'Could not create HR login');
+      setAddError(err.message || 'Could not create the login');
     } finally {
       setBusy(false);
     }
   };
 
-  const twoCol = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', columnGap: 12 };
+  const resendInvite = async (admin) => {
+    setBusy(true);
+    try {
+      const result = await resendStaffInvite(admin.id);
+      toast(result.message || 'Invitation sent', 'success');
+      refresh();
+    } catch (err) {
+      toast(err.message || 'Could not send the invitation', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const twoCol = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(180px, 100%), 1fr))', columnGap: 12 };
 
   return (
     <SettingsCard
-      title="HR logins"
-      description="People who can sign in to this ops console."
+      title="Staff & admin logins"
+      description="People who can sign in to this console. New logins get an email to set their own password."
       flush
       action={
         !showAdd && (
           <Button size="sm" onClick={() => setShowAdd(true)}>
-            + Add HR login
+            + Add login
           </Button>
         )
       }
     >
       {deactivateTarget && (
         <ConfirmDialog
-          title="Deactivate HR login?"
+          title="Deactivate login?"
           message={`${deactivateTarget.name} (${deactivateTarget.employeeId}) will no longer be able to sign in to the ops console.`}
           confirmWord={deactivateTarget.name}
           confirmLabel="Deactivate"
           onConfirm={confirmDeactivate}
           onCancel={() => setDeactivateTarget(null)}
+        />
+      )}
+      {deleteTarget && (
+        <ConfirmDialog
+          title="Delete this login permanently?"
+          message={`${deleteTarget.name} (${deleteTarget.email}) will be removed and can no longer sign in. This can't be undone — to keep their name on past actions, deactivate instead. Their earlier actions stay in the audit log.`}
+          confirmWord={deleteTarget.name}
+          confirmLabel="Delete permanently"
+          onConfirm={confirmDelete}
+          onCancel={() => setDeleteTarget(null)}
         />
       )}
       {rejectTarget && (
@@ -626,7 +665,7 @@ function ManageHrAdmins({ currentUserId }) {
       )}
 
       {showAdd && (
-        <FormPanel title="New HR login" onSubmit={addAdmin}>
+        <FormPanel title="New login" onSubmit={addAdmin}>
           <div style={twoCol}>
             <Field label="Employee ID">
               <TextInput value={newEmployeeId} onChange={(e) => setNewEmployeeId(e.target.value)} placeholder="e.g. HR002" autoFocus />
@@ -640,18 +679,19 @@ function ManageHrAdmins({ currentUserId }) {
             <Field label="Phone">
               <TextInput value={newPhone} onChange={(e) => setNewPhone(e.target.value)} />
             </Field>
-            <Field label="Password" hint="At least 6 characters">
-              <TextInput type="password" autoComplete="new-password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
-            </Field>
-            <Field label="Role">
+            <Field label="Role" hint="Admins also manage logins, send notifications and see the audit log.">
               <select className="ft-settings-input" value={newRole} onChange={(e) => setNewRole(e.target.value)} style={selectStyle}>
-                {HR_ROLE_OPTIONS.map((r) => (
-                  <option key={r} value={r}>
-                    {roleLabel(r)}
+                {ASSIGNABLE_ROLES.map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
                   </option>
                 ))}
               </select>
             </Field>
+          </div>
+          <div style={{ fontSize: 12.5, color: theme.textSecondary, lineHeight: 1.5 }}>
+            An invitation email goes to this address with a link to set their own password (valid for 72 hours). They can
+            sign in after that.
           </div>
           <ErrorText>{addError}</ErrorText>
           <FormActions>
@@ -659,7 +699,7 @@ function ManageHrAdmins({ currentUserId }) {
               Cancel
             </Button>
             <Button type="submit" disabled={busy}>
-              Add HR login
+              Send invitation
             </Button>
           </FormActions>
         </FormPanel>
@@ -670,7 +710,7 @@ function ManageHrAdmins({ currentUserId }) {
       ) : (
         <>
           {pending.length > 0 && (
-            <div style={{ background: WARNING_SOFT, borderRadius: 10, padding: 14, margin: '16px 22px' }}>
+            <div style={{ background: WARNING_SOFT, borderRadius: 10, padding: 14, margin: '16px clamp(12px, 4vw, 22px)' }}>
               <div style={{ fontSize: 11.5, fontWeight: 800, color: WARNING, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
                 Awaiting approval · {pending.length}
               </div>
@@ -679,7 +719,7 @@ function ManageHrAdmins({ currentUserId }) {
                   <Avatar name={p.name} size={34} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 700, color: theme.textPrimary }}>{p.name}</div>
-                    <div style={{ fontSize: 12, color: theme.textSecondary, marginTop: 2, lineHeight: 1.6 }}>
+                    <div style={{ fontSize: 12, color: theme.textSecondary, marginTop: 2, lineHeight: 1.6, overflowWrap: 'anywhere' }}>
                       {p.employeeId} · {p.email}
                       <br />
                       {p.phone || 'No phone'} · {p.department ? `${p.department.name} (${p.department.code})` : 'No plant'}
@@ -699,9 +739,9 @@ function ManageHrAdmins({ currentUserId }) {
                         aria-label={`Role for ${p.name}`}
                         style={{ ...selectStyle, width: 'auto', padding: '6px 10px', fontSize: 12.5 }}
                       >
-                        {HR_ROLE_OPTIONS.map((r) => (
-                          <option key={r} value={r}>
-                            {roleLabel(r)}
+                        {ASSIGNABLE_ROLES.map((r) => (
+                          <option key={r.value} value={r.value}>
+                            {r.label}
                           </option>
                         ))}
                       </select>
@@ -719,7 +759,7 @@ function ManageHrAdmins({ currentUserId }) {
           )}
 
           {accounts.length === 0 ? (
-            <EmptyNote>No HR logins yet.</EmptyNote>
+            <EmptyNote>No logins yet.</EmptyNote>
           ) : (
             accounts.map((admin, i) => (
               <ListItem key={admin.id} last={i === accounts.length - 1}>
@@ -752,6 +792,7 @@ function ManageHrAdmins({ currentUserId }) {
                           <span style={{ fontWeight: 700, fontSize: 14, color: theme.textPrimary }}>{admin.name}</span>
                           {admin.id === currentUserId && <span style={{ fontSize: 11.5, color: theme.textSecondary }}>(you)</span>}
                           <Badge tone="info">{roleLabel(admin.role)}</Badge>
+                          {admin.invitePending && <Badge tone="warning">Invitation pending</Badge>}
                           {!admin.isActive && <Badge>Inactive</Badge>}
                         </div>
                         <div style={{ fontSize: 12, color: theme.textSecondary, marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -760,7 +801,12 @@ function ManageHrAdmins({ currentUserId }) {
                         </div>
                       </div>
                     </div>
-                    <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                    <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
+                      {admin.invitePending && admin.isActive && (
+                        <Button size="sm" variant="secondary" onClick={() => resendInvite(admin)} disabled={busy} title={admin.invitedAt ? `Last sent ${formatDateTime(admin.invitedAt)}` : undefined}>
+                          Resend invitation
+                        </Button>
+                      )}
                       <Button size="sm" variant="secondary" onClick={() => startEdit(admin)} disabled={busy}>
                         Edit
                       </Button>
@@ -774,6 +820,11 @@ function ManageHrAdmins({ currentUserId }) {
                           {admin.isActive ? 'Deactivate' : 'Reactivate'}
                         </Button>
                       )}
+                      {admin.id !== currentUserId && (
+                        <Button size="sm" variant="danger" onClick={() => setDeleteTarget(admin)} disabled={busy}>
+                          Delete
+                        </Button>
+                      )}
                     </div>
                   </div>
                 )}
@@ -782,6 +833,76 @@ function ManageHrAdmins({ currentUserId }) {
           )}
         </>
       )}
+    </SettingsCard>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Worker & incharge passwords (admin)
+// ---------------------------------------------------------------------------
+
+// Makes everyone in a plant (or everyone) choose a new password at their next
+// sign-in — the fix for accounts still on a shared default password. For one
+// or a few people, use the selection in Workforce instead.
+function WorkerPasswordsCard() {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const { data: departments } = useQuery({ queryKey: ['hr-departments'], queryFn: getDepartments, staleTime: 5 * 60 * 1000 });
+  const [scope, setScope] = useState('');
+  const [confirming, setConfirming] = useState(false);
+
+  const activePlants = (departments || []).filter((d) => d.isActive !== false);
+  const chosen = activePlants.find((d) => d.id === scope);
+  const scopeLabel = scope === 'all' ? 'everyone in every plant' : chosen ? `everyone in ${chosen.name} (${chosen.code})` : '';
+
+  // Throws on failure so ConfirmDialog shows the error inline.
+  const confirm = async () => {
+    const result = await requirePasswordChange(scope === 'all' ? { scope: 'all' } : { scope: 'plant', departmentId: scope });
+    toast(result.message, result.count ? 'success' : 'info');
+    setConfirming(false);
+    setScope('');
+    queryClient.invalidateQueries({ queryKey: ['hr-workforce'] });
+  };
+
+  return (
+    <SettingsCard
+      title="Worker & incharge passwords"
+      description="Make people choose a new password at their next sign-in — for example, when accounts still use a shared default password."
+    >
+      {confirming && (
+        <ConfirmDialog
+          title="Require a new password?"
+          message={`At their next sign-in, ${scopeLabel} will use their current password once and then must choose a new one before doing anything else. People who already have to set one are not affected.`}
+          confirmWord={scope === 'all' ? 'EVERYONE' : undefined}
+          confirmLabel="Require new password"
+          onConfirm={confirm}
+          onCancel={() => setConfirming(false)}
+        />
+      )}
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <Field label="Who">
+          <select className="ft-settings-input" value={scope} onChange={(e) => setScope(e.target.value)} style={{ ...selectStyle, minWidth: 'min(220px, 100%)' }}>
+            <option value="" disabled>
+              Choose a plant or everyone
+            </option>
+            {activePlants.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name} ({d.code})
+              </option>
+            ))}
+            <option value="all">Everyone (all plants)</option>
+          </select>
+        </Field>
+        <div style={{ marginBottom: 14 }}>
+          <Button onClick={() => setConfirming(true)} disabled={!scope}>
+            Require new password
+          </Button>
+        </div>
+      </div>
+      <div style={{ fontSize: 12, color: theme.textSecondary, lineHeight: 1.5 }}>
+        New accounts and password resets already get a one-time temporary password, so this is only needed for existing
+        accounts.
+      </div>
     </SettingsCard>
   );
 }

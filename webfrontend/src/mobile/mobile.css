@@ -1340,30 +1340,6 @@
   gap: 12px;
 }
 
-.m-demo-row {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: center;
-}
-
-.m-demo-chip {
-  height: 38px;
-  padding: 0 14px;
-  border-radius: 999px;
-  border: 0;
-  background: var(--card);
-  font-size: 13px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.m-demo-chip span {
-  color: var(--muted);
-  font-size: 12px;
-}
-
 .m-staff-link {
   font-size: 14px;
   text-align: center;
@@ -2229,6 +2205,83 @@
   font-size: 13px;
 }
 
+/* ---------- password reset requests ---------- */
+
+.m-dock-badge {
+  position: absolute;
+  top: 5px;
+  right: calc(50% - 22px);
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--stop);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 18px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--card);
+}
+
+.m-forgot-link {
+  align-self: flex-end;
+  font-size: 13.5px;
+  margin-top: -6px;
+}
+
+.m-steps-lg {
+  font-size: 14.5px;
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.m-request-open,
+.m-request-static {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.m-request-open {
+  cursor: pointer;
+}
+
+.m-request-note {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.m-confirm-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: var(--field);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.m-confirm-check input {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  flex-shrink: 0;
+  accent-color: var(--brand);
+}
+
 /* ---------- wider screens (tablet / desktop) ---------- */
 
 @media (min-width: 640px) {
@@ -2249,4 +2302,114 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ---------- own password: rules checklist ---------- */
+
+.m-rules {
+  list-style: none;
+  margin: 0;
+  padding: 4px 4px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.m-rules li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.m-rule-ok {
+  color: var(--go);
+  font-weight: 600;
+}
+
+.m-login-hero-compact {
+  padding-bottom: 28px;
+  gap: 20px;
+}
+
+.m-login-hero-compact .m-login-headline h1 {
+  font-size: clamp(30px, 9vw, 38px);
+}
+
+.m-login-headline p b {
+  font-family: var(--font-mono);
+}
+
+/* ---------- temporary password, shown once ---------- */
+
+.m-temp-password {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: var(--field);
+  margin-bottom: 14px;
+}
+
+.m-temp-password .m-mono {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  user-select: all;
+}
+
+.m-temp-note {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--wait);
+  background: var(--wait-soft);
+  border-radius: 14px;
+  padding: 10px 12px;
+  margin: 0;
+}
+
+.m-tag-wait {
+  background: var(--wait-soft);
+  color: var(--wait);
+}
+
+/* ---------- offline ---------- */
+
+.m-offline-banner {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 14px;
+  padding-top: max(8px, env(safe-area-inset-top));
+  background: var(--ink);
+  color: var(--card);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  line-height: 1.35;
+}
+
+.m-offline-banner-sync {
+  background: var(--brand);
+  color: #fff;
+}
+
+.m-result-pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: var(--wait-soft);
+  color: var(--wait);
+  font-size: 12.5px;
+  font-weight: 700;
 }

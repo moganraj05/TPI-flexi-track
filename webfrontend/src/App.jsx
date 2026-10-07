@@ -1,6 +1,8 @@
 import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, onlineManager } from '@tanstack/react-query';
+import { PersistQueryClientProvider, persistQueryClientSave } from '@tanstack/react-query-persist-client';
+import { CACHE_MAX_AGE, persistOptions } from './offline/persist';
 
 // One site, two apps:
 //   /staff/*  HR / admin ops console (StaffApp)
@@ -9,6 +11,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 // the HR console's tables and exports, and HR never downloads the worker app.
 const StaffApp = lazy(() => import('./StaffApp'));
 const MobileApp = lazy(() => import('./mobile/MobileApp'));
+
+// TanStack Query assumes "online" until the first online/offline event —
+// start from the real state, so an app opened without a connection shows
+// its saved data instead of firing requests that can only fail.
+if (typeof navigator !== 'undefined' && 'onLine' in navigator) onlineManager.setOnline(navigator.onLine);
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -24,9 +31,25 @@ const queryClient = new QueryClient({
       // always forces a refetch regardless of staleTime. Screens that are
       // explicitly "live" override this per query.
       staleTime: 30 * 1000,
+      // Loaded data is kept (in memory and saved on the device, see
+      // offline/persist.js) long enough to be useful offline.
+      gcTime: CACHE_MAX_AGE,
     },
   },
 });
+
+// Save right away when the app is hidden or closed (switching apps, locking
+// the phone), instead of waiting for the next throttled save — so data a
+// screen just loaded is there the next time the app opens offline.
+if (typeof document !== 'undefined') {
+  const saveNow = () => {
+    persistQueryClientSave({ queryClient, ...persistOptions }).catch(() => {});
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') saveNow();
+  });
+  window.addEventListener('pagehide', saveNow);
+}
 
 // The HR console used to live at /app/*, /register and /forgot-password.
 // Old bookmarks and installed shortcuts keep working: they land on the same
@@ -42,7 +65,9 @@ function BootFallback() {
 
 export default function App() {
   return (
-    <QueryClientProvider client={queryClient}>
+    // Restores the data saved on this device before any screen fetches,
+    // then keeps saving it — the app opens with its last data offline.
+    <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
       <BrowserRouter>
         <Suspense fallback={<BootFallback />}>
           <Routes>
@@ -54,6 +79,6 @@ export default function App() {
           </Routes>
         </Suspense>
       </BrowserRouter>
-    </QueryClientProvider>
+    </PersistQueryClientProvider>
   );
 }

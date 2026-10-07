@@ -1,5 +1,5 @@
 const { Server } = require('socket.io');
-const jwt = require('jsonwebtoken');
+const { verifyToken, isSessionRevoked } = require('./utils/jwt');
 const prisma = require('./config/prisma');
 const { corsOptions } = require('./config/cors');
 const logger = require('./utils/logger');
@@ -29,7 +29,7 @@ function initRealtime(httpServer) {
       const token = socket.handshake.auth?.token;
       if (!token) return next(new Error('Authentication required'));
 
-      const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
+      const decoded = verifyToken(token);
       const user = await prisma.user.findUnique({ where: { id: decoded.id } });
 
       if (!user || !user.isActive) {
@@ -38,6 +38,10 @@ function initRealtime(httpServer) {
       }
       if ((decoded.tokenVersion || 0) !== (user.tokenVersion || 0)) {
         logger.warn('realtime.auth_failed', { reason: 'token_revoked', userId: user.id });
+        return next(new Error('Session expired, please log in again'));
+      }
+      if (await isSessionRevoked(decoded)) {
+        logger.warn('realtime.auth_failed', { reason: 'session_logged_out', userId: user.id });
         return next(new Error('Session expired, please log in again'));
       }
 
@@ -101,4 +105,28 @@ function emitFollowUpUpdate({ pollId, workerId }) {
   io.to('hr').emit('followup:update', { pollId, workerId, at: new Date().toISOString() });
 }
 
-module.exports = { initRealtime, emitPollUpdate, emitFollowUpUpdate };
+// A console login changed (invited, accepted, edited, deactivated, deleted,
+// approved). Lets every open Settings page refresh its list straight away —
+// e.g. "Invitation pending" disappears the moment the person sets a password.
+function emitStaffUpdate({ userId, type }) {
+  if (!io) return;
+  io.to('hr').emit('staff:update', { userId, type, at: new Date().toISOString() });
+}
+
+// Workers/incharges added, edited, deactivated or deleted (from the console
+// or the incharge app) — keeps every open Workforce page current.
+function emitWorkforceUpdate({ type, count = 1 }) {
+  if (!io) return;
+  io.to('hr').emit('workforce:update', { type, count, at: new Date().toISOString() });
+}
+
+// A password reset request was created, refreshed, approved, rejected or
+// completed — the plant's incharge apps (Requests tab + badge) and HR refresh.
+function emitResetRequestUpdate({ departmentId }) {
+  if (!io) return;
+  const payload = { at: new Date().toISOString() };
+  if (departmentId) io.to(`dept:${departmentId}`).emit('reset:update', payload);
+  io.to('hr').emit('reset:update', payload);
+}
+
+module.exports = { initRealtime, emitPollUpdate, emitFollowUpUpdate, emitStaffUpdate, emitWorkforceUpdate, emitResetRequestUpdate };

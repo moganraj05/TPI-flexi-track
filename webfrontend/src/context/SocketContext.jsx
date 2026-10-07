@@ -37,6 +37,10 @@ function invalidateRealtimeQueries(queryClient) {
   queryClient.invalidateQueries({ queryKey: ['hr-poll-detail'] });
   queryClient.invalidateQueries({ queryKey: ['hr-employee'] });
   queryClient.invalidateQueries({ queryKey: ['hr-follow-ups'] });
+  queryClient.invalidateQueries({ queryKey: ['hr-admins'] });
+  queryClient.invalidateQueries({ queryKey: ['hr-workforce'] });
+  queryClient.invalidateQueries({ queryKey: ['hr-reset-requests'] });
+  queryClient.invalidateQueries({ queryKey: ['hr-reset-summary'] });
 }
 
 export function SocketProvider({ children }) {
@@ -124,6 +128,30 @@ export function SocketProvider({ children }) {
 
       socket.on('followup:update', () => {
         queryClient.invalidateQueries({ queryKey: ['hr-follow-ups'] });
+      });
+
+      // A console login changed anywhere (invited, password set, edited,
+      // deactivated, deleted, approved) — e.g. "Invitation pending" clears
+      // the moment the invited person sets their password.
+      socket.on('staff:update', () => {
+        queryClient.invalidateQueries({ queryKey: ['hr-admins'] });
+      });
+
+      // A worker-app password reset request was raised, handled, moved up
+      // or completed (Password requests page, sidebar badge, password history).
+      socket.on('reset:update', () => {
+        queryClient.invalidateQueries({ queryKey: ['hr-reset-requests'] });
+        queryClient.invalidateQueries({ queryKey: ['hr-reset-summary'] });
+        queryClient.invalidateQueries({ queryKey: ['hr-employee'] });
+      });
+
+      // Workers/incharges changed (here, by another admin, or from the
+      // incharge app).
+      socket.on('workforce:update', () => {
+        queryClient.invalidateQueries({ queryKey: ['hr-workforce'] });
+        queryClient.invalidateQueries({ queryKey: ['hr-departments'] });
+        queryClient.invalidateQueries({ queryKey: ['hr-employee'] });
+        queryClient.invalidateQueries({ queryKey: ['hr-dashboard'] });
       });
     });
 

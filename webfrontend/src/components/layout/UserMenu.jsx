@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { theme, DANGER } from '../../theme';
+import { roleTag } from '../../utils/roles';
 import { initials } from '../../utils/format';
 import { useAuth } from '../../context/AuthContext';
 
-const ROLE_LABELS = { hr: 'HR', admin: 'Admin', superadmin: 'Super admin' };
 
 const SettingsIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -92,7 +92,7 @@ export function UserMenu() {
     navigate('/staff/login', { replace: true });
   };
 
-  const roleLabel = ROLE_LABELS[user?.role] || user?.role || '';
+  const roleLabel = user?.role ? roleTag(user.role) : '';
 
   return (
     <div ref={rootRef} style={{ position: 'relative' }}>

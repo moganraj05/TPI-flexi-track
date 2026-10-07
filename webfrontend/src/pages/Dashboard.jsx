@@ -15,15 +15,15 @@ import { useLiveStatus } from '../context/LiveStatusContext';
 const page = {
   wrap: { display: 'flex', flexDirection: 'column', gap: spacing.xl },
   section: { display: 'flex', flexDirection: 'column', gap: spacing.base },
-  liveGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: spacing.base },
-  kpiGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: spacing.base },
+  liveGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(300px, 100%), 1fr))', gap: spacing.base },
+  kpiGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(200px, 100%), 1fr))', gap: spacing.base },
   listCard: { background: theme.surface, border: `1px solid ${theme.borderColor}`, borderRadius: radius.lg, overflow: 'hidden' },
 };
 
 export function Dashboard() {
   const navigate = useNavigate();
   const { setLastUpdated } = useLiveStatus();
-  const { data, isLoading, isFetching, isError, error, dataUpdatedAt, refetch } = useQuery({
+  const { data, isPending: isLoading, isFetching, isError, error, dataUpdatedAt, refetch } = useQuery({
     queryKey: ['hr-dashboard'],
     queryFn: getDashboard,
     refetchInterval: 30000,
@@ -43,7 +43,7 @@ export function Dashboard() {
   // skeleton can never flicker in on a live refresh; it's strictly a nicer
   // first paint than a bare spinner.
   if (isLoading) return <DashboardSkeleton />;
-  if (isError) {
+  if (isError && !data) {
     return <EmptyState title="Could not load dashboard" message={error?.message} icon="!" tone="danger" />;
   }
 
@@ -118,7 +118,7 @@ function DashboardHeader({ stats, isFetching, onRefresh }) {
   return (
     <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
       <div>
-        <div style={{ fontSize: 26, fontWeight: 800, color: theme.textPrimary, letterSpacing: '-0.01em' }}>Dashboard</div>
+        <div className="ft-page-title" style={{ fontSize: 26, fontWeight: 800, color: theme.textPrimary, letterSpacing: '-0.01em' }}>Dashboard</div>
         <div style={{ fontSize: 13.5, color: theme.textSecondary, marginTop: 6, fontWeight: 500 }}>
           {stats.departments} plant{stats.departments === 1 ? '' : 's'} · {stats.workers} workers · {stats.incharges}{' '}
           incharges
@@ -168,11 +168,11 @@ function AttendanceKpis({ stats, trackedToday }) {
     { key: 'pending', label: 'Pending', value: stats.pending, tone: WARNING },
   ];
   return (
-    <div style={page.kpiGrid}>
+    <div className="ft-kpi-grid" style={page.kpiGrid}>
       {items.map((item) => (
         <div
           key={item.key}
-          className="ft-card-hover"
+          className="ft-card-hover ft-kpi-card"
           style={{
             background: theme.surface,
             border: `1px solid ${theme.borderColor}`,
@@ -187,12 +187,15 @@ function AttendanceKpis({ stats, trackedToday }) {
           </div>
           <div
             key={item.value}
-            className="ft-fade-in"
+            className="ft-fade-in ft-kpi-value"
             style={{ fontSize: 40, fontWeight: 800, fontFamily: theme.mono, color: item.tone, marginTop: 8, lineHeight: 1 }}
           >
             {item.value}
           </div>
-          <div style={{ fontSize: 12, color: theme.mutedColor, marginTop: 8 }}>of {trackedToday} tracked today</div>
+          <div style={{ fontSize: 12, color: theme.mutedColor, marginTop: 8 }}>
+            of {trackedToday}
+            <span className="ft-hide-phone"> tracked today</span>
+          </div>
         </div>
       ))}
     </div>
@@ -212,9 +215,9 @@ function SupportingKpis({ stats, notifiedPct }) {
     { label: 'Notified', value: `${notifiedPct}%` },
   ];
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: spacing.xl, padding: `${spacing.md}px ${spacing.base}px`, background: theme.bg, borderRadius: radius.md }}>
+    <div className="ft-support-kpis" style={{ display: 'flex', flexWrap: 'wrap', gap: spacing.xl, padding: `${spacing.md}px ${spacing.base}px`, background: theme.bg, borderRadius: radius.md }}>
       {items.map((item) => (
-        <div key={item.label} style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 90 }}>
+        <div key={item.label} style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 80 }}>
           <span style={{ fontSize: 11, color: theme.mutedColor, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
             {item.label}
           </span>
@@ -272,7 +275,7 @@ function PlantRow({ dept, isLast, onOpen }) {
   const hasLive = dept.livePolls > 0;
   return (
     <button
-      className="ft-table-row"
+      className="ft-table-row ft-wrap-row"
       onClick={onOpen}
       style={{
         display: 'flex',
@@ -287,7 +290,7 @@ function PlantRow({ dept, isLast, onOpen }) {
       }}
     >
       <span style={chipStyle(dept.code)}>{dept.code}</span>
-      <div style={{ minWidth: 150 }}>
+      <div style={{ minWidth: 0, flex: '1 1 150px' }}>
         <div style={{ fontWeight: 700, fontSize: 14, color: theme.textPrimary }}>{dept.name}</div>
         <div style={{ fontSize: 12, color: theme.mutedColor }}>
           {dept.incharges} incharge{dept.incharges === 1 ? '' : 's'} · {dept.workers} workers
@@ -296,7 +299,7 @@ function PlantRow({ dept, isLast, onOpen }) {
       {hasLive ? (
         <>
           <Badge tone="info">{dept.livePolls} live</Badge>
-          <div style={{ flex: 1, minWidth: 100 }}>
+          <div className="ft-wrap-full" style={{ flex: 1, minWidth: 100 }}>
             <ProgressBar coming={dept.coming} notComing={dept.notComing} pending={dept.pending} total={dept.workers} />
           </div>
           <span style={{ fontSize: 12, color: theme.mutedColor, whiteSpace: 'nowrap' }}>
@@ -306,7 +309,7 @@ function PlantRow({ dept, isLast, onOpen }) {
       ) : (
         <span style={{ flex: 1, fontSize: 12, color: theme.mutedColor }}>No live poll right now</span>
       )}
-      <span style={{ fontSize: 15, color: theme.mutedColor, flexShrink: 0 }}>→</span>
+      <span className="ft-hide-phone" style={{ fontSize: 15, color: theme.mutedColor, flexShrink: 0 }}>→</span>
     </button>
   );
 }
@@ -316,7 +319,7 @@ function HistoryRow({ poll, isLast, onOpen }) {
   const rateTone = rate >= 80 ? 'success' : rate >= 50 ? 'warning' : 'danger';
   return (
     <button
-      className="ft-table-row"
+      className="ft-table-row ft-wrap-row"
       onClick={onOpen}
       style={{
         display: 'flex',
@@ -332,7 +335,7 @@ function HistoryRow({ poll, isLast, onOpen }) {
     >
       <span style={chipStyle(poll.department?.code)}>{poll.department?.code}</span>
       <span style={{ fontSize: 13, color: theme.textPrimary, fontWeight: 600, minWidth: 110 }}>{shiftLabel(poll)}</span>
-      <span style={{ fontSize: 12, color: theme.mutedColor, flex: 1 }}>Closed {formatDateTime(poll.closesAt)}</span>
+      <span className="ft-wrap-last" style={{ fontSize: 12, color: theme.mutedColor, flex: 1 }}>Closed {formatDateTime(poll.closesAt)}</span>
       <Badge tone={rateTone}>{rate}% attendance</Badge>
     </button>
   );

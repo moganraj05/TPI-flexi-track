@@ -60,7 +60,7 @@ export function LiveBoard() {
     staleTime: Infinity,
   });
   const selectedShift = (shiftCatalog || []).find((s) => s.code === shiftCode);
-  const { data, isLoading, isFetching, isError, error, dataUpdatedAt, refetch } = useQuery({
+  const { data, isPending: isLoading, isFetching, isError, error, dataUpdatedAt, refetch } = useQuery({
     queryKey: ['hr-live'],
     queryFn: getLiveBoard,
     refetchInterval: 8000,
@@ -110,7 +110,7 @@ export function LiveBoard() {
   };
 
   if (isLoading) return <LiveBoardSkeleton />;
-  if (isError) return <EmptyState title="Could not load live polls" message={error?.message} icon="!" tone="danger" />;
+  if (isError && !data) return <EmptyState title="Could not load live polls" message={error?.message} icon="!" tone="danger" />;
 
   const selectedPoll = polls.find((p) => p.id === selectedPollId) || null;
 
@@ -190,7 +190,7 @@ function LiveBoardHeader({
     <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
       <div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <div style={{ fontSize: 26, fontWeight: 800, color: theme.textPrimary, letterSpacing: '-0.01em' }}>Live Board</div>
+          <div className="ft-page-title" style={{ fontSize: 26, fontWeight: 800, color: theme.textPrimary, letterSpacing: '-0.01em' }}>Live Board</div>
           <span
             style={{
               display: 'flex',
@@ -215,7 +215,7 @@ function LiveBoardHeader({
           {pollCount > 0 && ` · ${pollCount} poll${pollCount === 1 ? '' : 's'} open`}
         </div>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div className="ft-toolbar" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <PlantSelect options={plantFilterOptions(departments)} value={plantFilter} onChange={onPlantFilter} />
         <ShiftSelect
           shifts={shiftCatalog || []}
@@ -296,15 +296,15 @@ function AttendanceSummary({ summary }) {
     { key: 'pending', label: 'Pending', value: summary.pending, tone: WARNING },
   ];
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: spacing.base }}>
+    <div className="ft-kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(160px, 100%), 1fr))', gap: spacing.base }}>
       {items.map((item) => (
         <div
           key={item.key}
-          className="ft-card-hover"
+          className="ft-card-hover ft-kpi-card"
           style={{ background: theme.surface, border: `1px solid ${theme.borderColor}`, borderTop: `3px solid ${item.tone}`, borderRadius: radius.lg, padding: spacing.base }}
         >
           <div style={{ fontSize: 11, fontWeight: 700, color: theme.textSecondary, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{item.label}</div>
-          <div key={item.value} className="ft-fade-in" style={{ fontSize: 32, fontWeight: 800, fontFamily: theme.mono, color: item.tone, marginTop: 6, lineHeight: 1 }}>
+          <div key={item.value} className="ft-fade-in ft-kpi-value" style={{ fontSize: 32, fontWeight: 800, fontFamily: theme.mono, color: item.tone, marginTop: 6, lineHeight: 1 }}>
             {item.value}
           </div>
         </div>
@@ -390,7 +390,7 @@ function RosterTableRow({ person, onOpen, onMark }) {
       </Td>
       <Td>
         {isPending && onMark ? (
-          <div style={{ display: 'flex', gap: 6 }}>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             <Button variant="success" size="sm" onClick={() => onMark(person, 'yes')}>
               Yes
             </Button>
@@ -421,7 +421,7 @@ function LiveBoardSkeleton() {
         <SkeletonText width={140} height={36} />
       </div>
       <SkeletonCard lines={3} />
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: spacing.base }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(160px, 100%), 1fr))', gap: spacing.base }}>
         <SkeletonCard lines={2} />
         <SkeletonCard lines={2} />
         <SkeletonCard lines={2} />

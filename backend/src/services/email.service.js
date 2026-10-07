@@ -213,8 +213,33 @@ function sendPasswordChangedEmail({ to, name }) {
   return sendEmail({ to, subject, text, html });
 }
 
+// Sent when an admin creates a staff/admin login: a link to set their own
+// password (the account has none until then).
+function sendStaffInviteEmail({ to, name, roleLabel, invitedBy, link, expiresInHours }) {
+  const subject = 'You have been invited to FlexiTrack';
+  const text =
+    `Hi ${name},\n\n${invitedBy} has created a FlexiTrack ${roleLabel} login for you (${to}).\n\n` +
+    `Set your password here:\n${link}\n\n` +
+    `The link works once and expires in ${expiresInHours} hours. After setting your password, sign in with this email address.\n\n` +
+    `If you weren't expecting this, you can ignore this email.`;
+  const html = layout(
+    subject,
+    `<p style="font-size:14px;margin:0 0 12px">Hi ${escapeHtml(name)},</p>
+     <p style="font-size:14px;margin:0 0 18px">${escapeHtml(invitedBy)} has created a FlexiTrack <b>${escapeHtml(roleLabel)}</b> login for you
+     (<b>${escapeHtml(to)}</b>). Set your own password to start using it:</p>
+     <p style="text-align:center;margin:0 0 18px">
+       <a href="${escapeHtml(link)}" style="display:inline-block;background:#264653;color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 22px;border-radius:8px">Set my password</a>
+     </p>
+     <p style="font-size:12.5px;color:#5b6475;margin:0 0 8px">The link works once and expires in ${expiresInHours} hours.
+     After setting your password, sign in with this email address.</p>
+     <p style="font-size:12px;color:#8a93a3;margin:0;word-break:break-all">If the button doesn't work, copy this link into your browser:<br>${escapeHtml(link)}</p>`
+  );
+  return sendEmail({ to, subject, text, html });
+}
+
 module.exports = {
   EmailNotConfiguredError,
+  sendStaffInviteEmail,
   isConfigured,
   sendOtpEmail,
   sendRegistrationReceivedEmail,

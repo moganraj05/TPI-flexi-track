@@ -5,18 +5,18 @@ import brandMark from '../../assets/brand-mark.svg';
 // (sign in, create account, forgot password), so they read as one flow.
 export function AuthLayout({ children }) {
   return (
-    <div style={theme.loginPage}>
-      <div style={theme.loginLeftPanel}>
+    <div className="ft-auth" style={theme.loginPage}>
+      <div className="ft-auth-brand" style={theme.loginLeftPanel}>
         <img src={brandMark} alt="" style={theme.loginWatermark} aria-hidden="true" />
         <div style={theme.loginLogoGlow} aria-hidden="true" />
         <div style={{ position: 'relative' }}>
           <div style={theme.loginBadge}>Ops Console</div>
-          <img src={brandMark} alt="" style={{ width: 88, height: 88, display: 'block', marginBottom: 20 }} />
-          <div style={{ fontSize: 40, fontWeight: 800, letterSpacing: '-0.02em', lineHeight: 1.1 }}>FlexiTrack</div>
+          <img className="ft-auth-logo" src={brandMark} alt="" style={{ width: 88, height: 88, display: 'block', marginBottom: 20 }} />
+          <div className="ft-auth-name" style={{ fontSize: 40, fontWeight: 800, letterSpacing: '-0.02em', lineHeight: 1.1 }}>FlexiTrack</div>
         </div>
       </div>
 
-      <div style={theme.loginRightPanel}>{children}</div>
+      <div className="ft-auth-main" style={theme.loginRightPanel}>{children}</div>
     </div>
   );
 }

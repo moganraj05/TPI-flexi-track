@@ -1,6 +1,10 @@
+import { useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
-import { theme, navButtonStyle } from '../../theme';
+import { useQuery } from '@tanstack/react-query';
+import { theme, navButtonStyle, DANGER } from '../../theme';
+import { getResetRequestSummary } from '../../api/hr';
 import brandMark from '../../assets/brand-mark.svg';
+import { useAuth } from '../../context/AuthContext';
 
 // 18px stroke icons for the nav — needed once the sidebar can collapse to an
 // icon-only rail, where a label no longer fits.
@@ -40,6 +44,18 @@ const ICONS = {
       <path d="M14 2.5v6h6M8 17v-3M12 17v-6M16 17v-4" />
     </>
   ),
+  key: (
+    <>
+      <circle cx="7.5" cy="15.5" r="4.5" />
+      <path d="m10.7 12.3 9.8-9.8M17 6l3 3M14.5 8.5l2.5 2.5" />
+    </>
+  ),
+  audit: (
+    <>
+      <path d="M12 2.5 4 5.5v6c0 5 3.4 9.3 8 10.5 4.6-1.2 8-5.5 8-10.5v-6Z" />
+      <path d="m9 12 2 2 4-4" />
+    </>
+  ),
   settings: (
     <>
       <circle cx="12" cy="12" r="3" />
@@ -53,8 +69,10 @@ const NAV = [
   { to: '/staff/app/live', label: 'Live Board', icon: 'live' },
   { to: '/staff/app/attendance', label: 'Attendance', icon: 'attendance' },
   { to: '/staff/app/workforce', label: 'Workforce', icon: 'workforce' },
-  { to: '/staff/app/notifications', label: 'Notifications', icon: 'notifications' },
+  { to: '/staff/app/password-requests', label: 'Password requests', icon: 'key', badge: 'reset' },
+  { to: '/staff/app/notifications', label: 'Notifications', icon: 'notifications', roles: ['admin', 'superadmin'] },
   { to: '/staff/app/reports', label: 'Reports', icon: 'reports' },
+  { to: '/staff/app/audit', label: 'Audit log', icon: 'audit', roles: ['admin', 'superadmin'] },
   { to: '/staff/app/settings', label: 'Settings', icon: 'settings' },
 ];
 
@@ -67,16 +85,46 @@ function NavIcon({ name }) {
 }
 
 // `collapsed` shrinks it to an icon rail (labels move into tooltips), toggled
-// from the Topbar and remembered per browser by AppShell.
-export function Sidebar({ collapsed }) {
+// from the Topbar and remembered per browser by AppShell. `drawer` (tablet /
+// phone) turns it into a slide-in panel over the page, shown while `open`.
+export function Sidebar({ collapsed, drawer = false, open = false, onClose }) {
+  const { user } = useAuth();
+  const items = NAV.filter((item) => !item.roles || item.roles.includes(user?.role));
+  // Reset requests now with HR (nobody else will handle them) — kept live by
+  // the 'reset:update' socket event; the interval is only a fallback.
+  const { data: resetSummary } = useQuery({
+    queryKey: ['hr-reset-summary'],
+    queryFn: getResetRequestSummary,
+    refetchInterval: 5 * 60 * 1000,
+    enabled: !!user,
+  });
+  const badges = { reset: resetSummary?.hr || 0 };
+
+  // Escape closes the drawer.
+  useEffect(() => {
+    if (!drawer || !open) return undefined;
+    const onKey = (e) => e.key === 'Escape' && onClose?.();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [drawer, open, onClose]);
+
   return (
+    <>
+    {drawer && (
+      <div className={`ft-drawer-backdrop${open ? ' ft-drawer-backdrop-open' : ''}`} onClick={onClose} aria-hidden="true" />
+    )}
     <aside
+      className={drawer ? `ft-sidebar ft-drawer${open ? ' ft-drawer-open' : ''}` : 'ft-sidebar'}
+      inert={drawer && !open}
       style={{
         ...theme.sidebar,
         width: collapsed ? 68 : theme.sidebar.width,
         padding: collapsed ? '20px 10px' : theme.sidebar.padding,
         position: 'relative',
         overflow: 'hidden',
+        // Laptop: fixed panel, no scrollbar. Drawer (tablet / phone): can
+        // scroll on short or landscape screens, with the scrollbar hidden.
+        overflowY: drawer ? 'auto' : 'hidden',
         transition: 'width 180ms ease-out, padding 180ms ease-out',
       }}
       aria-label="Main navigation"
@@ -92,9 +140,21 @@ export function Sidebar({ collapsed }) {
             </div>
           </div>
         )}
+        {drawer && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close menu"
+            style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: theme.sidebarMuted, padding: 8, display: 'inline-flex', borderRadius: 8 }}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+              <path d="M6 6l12 12M18 6 6 18" />
+            </svg>
+          </button>
+        )}
       </div>
       <nav style={theme.navList}>
-        {NAV.map((item) => (
+        {items.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
@@ -107,11 +167,25 @@ export function Sidebar({ collapsed }) {
               whiteSpace: 'nowrap',
             })}
           >
-            <NavIcon name={item.icon} />
+            <span style={{ position: 'relative', display: 'inline-flex' }}>
+              <NavIcon name={item.icon} />
+              {collapsed && badges[item.badge] > 0 && (
+                <span aria-hidden="true" style={{ position: 'absolute', top: -3, right: -4, width: 8, height: 8, borderRadius: '50%', background: DANGER }} />
+              )}
+            </span>
             {!collapsed && item.label}
+            {!collapsed && badges[item.badge] > 0 && (
+              <span
+                aria-label={`${badges[item.badge]} waiting for HR`}
+                style={{ marginLeft: 'auto', minWidth: 20, height: 20, padding: '0 6px', borderRadius: 10, background: DANGER, color: '#fff', fontSize: 11, fontWeight: 800, lineHeight: '20px', textAlign: 'center' }}
+              >
+                {badges[item.badge] > 99 ? '99+' : badges[item.badge]}
+              </span>
+            )}
           </NavLink>
         ))}
       </nav>
     </aside>
+    </>
   );
 }

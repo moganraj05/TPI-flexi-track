@@ -128,7 +128,7 @@ export function InchargeDashboard() {
         profilePath="/incharge/profile"
       />
 
-      {query.isLoading ? (
+      {query.isPending ? (
         <Loading />
       ) : query.isError && !query.data ? (
         <div className="m-body">

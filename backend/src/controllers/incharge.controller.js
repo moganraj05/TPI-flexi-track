@@ -1,11 +1,25 @@
 const prisma = require('../config/prisma');
 const { autoCloseExpiredPolls } = require('../utils/poll');
-const { hashPassword } = require('../utils/password');
 const { formatDept, getPollSummary, summarizePolls } = require('../utils/pollReport');
 const { notificationChannelSelect, hasNotificationChannel } = require('../services/notification.service');
 const { notifyPollClosed } = require('../services/poll-notifications.service');
+const { recordAudit, diffChanges, personLabel } = require('../services/audit.service');
+const { tempPasswordData } = require('../services/temp-password.service');
+
+// Audit snapshot of a team worker (teamWorkerSelect rows).
+const workerAuditSnapshot = (w) => ({
+  name: w.name,
+  phone: w.phone || '',
+  shift: w.shiftStart && w.shiftEnd ? formatShiftName(w.shiftStart, w.shiftEnd) : '',
+});
+const WORKER_AUDIT_FIELDS = [
+  { key: 'name', label: 'Name' },
+  { key: 'phone', label: 'Phone' },
+  { key: 'shift', label: 'Shift' },
+  { key: 'password', label: 'Password' },
+];
 const { parsePagination, buildMeta } = require('../utils/pagination');
-const { emitPollUpdate } = require('../realtime');
+const { emitPollUpdate, emitWorkforceUpdate } = require('../realtime');
 const { DEFAULT_SHIFT_START, DEFAULT_SHIFT_END } = require('../utils/shift');
 const { resolveShift, formatShiftName } = require('../config/shiftCatalog');
 
@@ -49,6 +63,7 @@ const formatTeamWorker = (worker, livePoll = null, liveAnswer = null) => ({
   ),
   // Reachable on at least one channel: the Android APK or a browser.
   hasNotifications: hasNotificationChannel(worker),
+  mustChangePassword: worker.mustChangePassword === true,
   livePoll: livePoll
     ? {
         id: livePoll.id,
@@ -81,6 +96,7 @@ const teamWorkerSelect = {
   phone: true,
   shiftStart: true,
   shiftEnd: true,
+  mustChangePassword: true,
   ...notificationChannelSelect,
 };
 
@@ -181,6 +197,16 @@ exports.closePoll = async (req, res, next) => {
     if (count === 1) {
       emitPollUpdate({ pollId: poll.id, departmentId: poll.departmentId, type: 'closed' });
       notifyPollClosed(poll.id, { excludeUserId: req.user.id });
+      const label = `${poll.shift} · ${new Date(poll.date).toISOString().slice(0, 10)}`;
+      await recordAudit(req, {
+        action: 'poll.closed_early',
+        entityType: 'poll',
+        entityId: poll.id,
+        entityLabel: label,
+        summary: `Closed the poll ${label} early (scheduled close: ${new Date(poll.closesAt).toISOString()})`,
+        changes: [{ field: 'status', label: 'Status', from: 'Open', to: 'Closed' }],
+        metadata: { scheduledClosesAt: poll.closesAt },
+      });
     }
 
     const populated = await prisma.poll.findUnique({ where: { id: poll.id }, include: pollInclude });
@@ -247,14 +273,14 @@ exports.createTeamWorker = async (req, res, next) => {
   try {
     const { employeeId, name, phone, password } = req.body;
 
-    if (!employeeId?.trim() || !name?.trim() || !password) {
+    if (!employeeId?.trim() || !name?.trim()) {
       return res.status(400).json({
         success: false,
-        message: 'Employee ID, name and password are required',
+        message: 'Employee ID and name are required',
       });
     }
 
-    if (password.length < 6) {
+    if (password && password.length < 6) {
       return res.status(400).json({
         success: false,
         message: 'Password must be at least 6 characters',
@@ -272,12 +298,15 @@ exports.createTeamWorker = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Employee ID already exists' });
     }
 
+    // Its own temporary password (generated unless the older app sent one);
+    // the worker sets a personal one at first sign-in.
+    const temp = await tempPasswordData('new_account', password || undefined);
     const worker = await prisma.user.create({
       data: {
         employeeId: normalizedId,
         name: name.trim(),
         phone: phone?.trim() || '',
-        password: await hashPassword(password),
+        ...temp.data,
         role: 'worker',
         departmentId: getDeptId(req.user),
         inchargeId: req.user.id,
@@ -288,10 +317,22 @@ exports.createTeamWorker = async (req, res, next) => {
       select: teamWorkerSelect,
     });
 
+    await recordAudit(req, {
+      action: 'member.created',
+      entityType: 'user',
+      entityId: worker.id,
+      entityLabel: personLabel(worker),
+      summary: `Added worker ${personLabel(worker)} to their team (incharge app)`,
+      changes: diffChanges({}, workerAuditSnapshot(worker), WORKER_AUDIT_FIELDS.filter((f) => f.key !== 'password')),
+      metadata: { role: 'worker', via: 'incharge_app' },
+    });
+
+    emitWorkforceUpdate({ type: 'created' });
     res.status(201).json({
       success: true,
       message: 'Worker added to your team',
-      data: formatTeamWorker(worker),
+      // Shown once to the incharge, never again.
+      data: { ...formatTeamWorker(worker), temporaryPassword: password ? null : temp.plain, temporaryPasswordExpiresAt: temp.expiresAt },
     });
   } catch (error) {
     next(error);
@@ -306,7 +347,17 @@ exports.updateTeamWorker = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Worker not found in your team' });
     }
 
-    const { name, phone, password } = req.body;
+    // Incharges can't change an existing worker's password (that's done by
+    // HR/admin in the staff console). Refused outright rather than ignored,
+    // so an older app that still sends it gets a clear answer.
+    if (req.body.password) {
+      return res.status(403).json({
+        success: false,
+        message: "Incharges can't change a worker's password. Ask HR or an admin to reset it.",
+      });
+    }
+
+    const { name, phone } = req.body;
     const data = {};
 
     if (name !== undefined) {
@@ -334,22 +385,30 @@ exports.updateTeamWorker = async (req, res, next) => {
       if (shift.shiftName) data.shiftName = shift.shiftName;
     }
 
-    if (password) {
-      if (password.length < 6) {
-        return res.status(400).json({
-          success: false,
-          message: 'Password must be at least 6 characters',
-        });
-      }
-      data.password = await hashPassword(password);
-    }
-
     const updated = await prisma.user.update({
       where: { id: worker.id },
       data,
       select: teamWorkerSelect,
     });
 
+    const workerChanges = diffChanges(
+      workerAuditSnapshot(worker),
+      workerAuditSnapshot(updated),
+      WORKER_AUDIT_FIELDS
+    );
+    if (workerChanges.length) {
+      await recordAudit(req, {
+        action: 'member.updated',
+        entityType: 'user',
+        entityId: worker.id,
+        entityLabel: personLabel(updated),
+        summary: `Updated worker ${personLabel(updated)}: ${workerChanges.map((c) => c.label.toLowerCase()).join(', ')} (incharge app)`,
+        changes: workerChanges,
+        metadata: { role: 'worker', via: 'incharge_app' },
+      });
+    }
+
+    emitWorkforceUpdate({ type: 'updated' });
     res.json({
       success: true,
       message: 'Worker updated',
@@ -373,6 +432,17 @@ exports.deleteTeamWorker = async (req, res, next) => {
       data: { isActive: false, pushToken: null, webPushSubscriptions: { deleteMany: {} } },
     });
 
+    await recordAudit(req, {
+      action: 'member.deactivated',
+      entityType: 'user',
+      entityId: worker.id,
+      entityLabel: personLabel(worker),
+      summary: `Removed worker ${personLabel(worker)} from their team (incharge app)`,
+      changes: [{ field: 'status', label: 'Status', from: 'Active', to: 'Inactive' }],
+      metadata: { role: 'worker', via: 'incharge_app' },
+    });
+
+    emitWorkforceUpdate({ type: 'deactivated' });
     res.json({ success: true, message: 'Worker removed from your team' });
   } catch (error) {
     next(error);

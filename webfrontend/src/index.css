@@ -311,3 +311,448 @@ a {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* Workforce: rows ticked for an admin bulk action. */
+.ft-row-selected {
+  background: #e3eef3;
+}
+.ft-row-selected:hover {
+  background: #d5e6ee;
+}
+
+/* =====================================================================
+   Responsive staff console
+   Breakpoints (keep in sync with hooks/useMediaQuery.js):
+     laptop  >= 900px   current layout (sidebar or icon rail)
+     tablet  < 900px    sidebar becomes a slide-in drawer
+     phone   < 640px    tighter spacing, tables become stacked cards
+     small   < 360px    smallest phones
+   Pages use inline styles, so these rules hook in through ft-* classes
+   (and `!important` where they must beat an inline style).
+   ===================================================================== */
+
+/* Mobile browsers: 100vh includes the address bar; dvh doesn't. */
+@supports (height: 100dvh) {
+  .ft-shell,
+  .ft-main {
+    height: 100dvh !important;
+  }
+  .ft-auth {
+    min-height: 100dvh !important;
+  }
+}
+
+/* Long words / emails / IDs never push the page wider than the screen. */
+.ft-content {
+  overflow-x: hidden;
+  overflow-wrap: break-word;
+}
+
+/* ---------- drawer navigation (tablet / phone) ---------- */
+.ft-drawer {
+  position: fixed !important;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 90;
+  width: min(280px, 84vw) !important;
+  padding: 18px 14px !important;
+  transform: translateX(-102%);
+  transition: transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1) !important;
+  box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+  padding-bottom: max(18px, env(safe-area-inset-bottom)) !important;
+}
+.ft-drawer {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  overscroll-behavior: contain;
+}
+.ft-drawer::-webkit-scrollbar {
+  display: none;
+}
+.ft-drawer-open {
+  transform: translateX(0);
+  box-shadow: 12px 0 40px rgba(8, 14, 17, 0.35);
+}
+.ft-drawer nav a {
+  padding: 12px 12px !important;
+  font-size: 14.5px !important;
+}
+.ft-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 89;
+  background: rgba(8, 14, 17, 0.5);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease-out;
+}
+.ft-drawer-backdrop-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ---------- small laptops ---------- */
+@media (max-width: 1099.98px) {
+  .ft-content {
+    padding: 22px !important;
+  }
+}
+
+/* ---------- tablet ---------- */
+@media (max-width: 899.98px) {
+  .ft-topbar {
+    padding: 10px 16px !important;
+    padding-top: max(10px, env(safe-area-inset-top)) !important;
+    gap: 10px;
+  }
+  .ft-topbar-title {
+    font-size: 17px !important;
+  }
+  .ft-content {
+    padding: 18px !important;
+    gap: 18px !important;
+  }
+  .ft-page-title {
+    font-size: 22px !important;
+  }
+
+  /* Sign-in pages: brand panel becomes a compact header band. */
+  .ft-auth {
+    flex-direction: column;
+  }
+  .ft-auth-brand {
+    flex: 0 0 auto !important;
+    padding: 28px 24px !important;
+    padding-top: max(28px, env(safe-area-inset-top)) !important;
+  }
+  .ft-auth-brand > div:last-child {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .ft-auth-brand > div:last-child > div:first-child {
+    margin-bottom: 0 !important;
+    order: 3;
+  }
+  .ft-auth-logo {
+    width: 44px !important;
+    height: 44px !important;
+    margin-bottom: 0 !important;
+  }
+  .ft-auth-name {
+    font-size: 28px !important;
+  }
+  .ft-auth-main {
+    flex: 1 0 auto !important;
+    align-items: flex-start !important;
+    padding: 24px 16px 32px !important;
+  }
+}
+
+/* ---------- phone ---------- */
+@media (max-width: 639.98px) {
+  .ft-content {
+    padding: 14px 12px 24px !important;
+    gap: 14px !important;
+  }
+  .ft-topbar {
+    padding: 8px 12px !important;
+    padding-top: max(8px, env(safe-area-inset-top)) !important;
+  }
+  .ft-page-title {
+    font-size: 21px !important;
+  }
+  .ft-hide-phone {
+    display: none !important;
+  }
+
+  /* Header toolbars: buttons share the row instead of overflowing. */
+  .ft-toolbar {
+    width: 100%;
+  }
+  .ft-toolbar > * {
+    flex: 1 1 auto;
+  }
+
+  /* KPI tiles: three compact tiles side by side. */
+  .ft-kpi-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+  }
+  .ft-kpi-card {
+    padding: 12px 10px !important;
+    min-width: 0;
+  }
+  .ft-kpi-card > div:first-child {
+    font-size: 10.5px !important;
+    letter-spacing: 0.02em !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .ft-kpi-value {
+    font-size: 26px !important;
+  }
+  .ft-support-kpis {
+    gap: 14px 20px !important;
+  }
+
+  /* List rows that pack many items: wrap onto a second line. */
+  .ft-wrap-row {
+    flex-wrap: wrap;
+    row-gap: 8px !important;
+  }
+  .ft-wrap-full {
+    flex: 1 1 100% !important;
+    order: 5;
+  }
+  .ft-wrap-last {
+    flex: 1 1 100% !important;
+    order: 5;
+  }
+
+  /* Cards with built-in padding (Settings etc.). */
+  .ft-card-head {
+    padding: 14px 16px !important;
+  }
+  .ft-card-body {
+    padding: 14px 16px 18px !important;
+  }
+  .ft-list-item {
+    padding: 12px 16px !important;
+  }
+  .ft-history-event {
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 2px !important;
+  }
+
+  /* Dialogs: nearly full width, scroll inside when tall. */
+  .ft-modal-overlay {
+    padding: 12px !important;
+  }
+  .ft-modal-card {
+    padding: 20px 18px !important;
+    max-height: calc(100dvh - 24px);
+    overflow-y: auto;
+  }
+
+  /* Toasts span the bottom of the screen. */
+  .ft-toast-stack {
+    left: 12px !important;
+    right: 12px !important;
+    bottom: max(12px, env(safe-area-inset-bottom)) !important;
+    align-items: stretch !important;
+  }
+
+  .ft-auth-main > * {
+    padding: 28px 20px !important;
+    border-radius: 16px !important;
+  }
+}
+
+
+/* ---------- data tables as cards ----------
+   Labels come from hooks/useResponsiveTables.js. Tablets: only wide tables
+   (6+ columns), as two-column cards. Phones: every table, one column. */
+@media (max-width: 899.98px) {
+  table.ft-rt-wide,
+  table.ft-rt-wide > tbody {
+    display: block;
+    width: 100%;
+  }
+  table.ft-rt-wide > thead {
+    display: none;
+  }
+  table.ft-rt-wide > tbody > tr {
+    display: block;
+    position: relative;
+    padding: 12px 14px;
+  }
+  table.ft-rt-wide > tbody > tr > td {
+    display: grid !important;
+    grid-template-columns: minmax(84px, 34%) minmax(0, 1fr);
+    column-gap: 10px;
+    row-gap: 0;
+    align-items: start;
+    justify-items: start;
+    width: auto !important;
+    padding: 4px 0 !important;
+    border: none !important;
+    text-align: left !important;
+    min-width: 0;
+  }
+  table.ft-rt-wide > tbody > tr > td::before {
+    content: attr(data-label);
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #3f7489;
+    /* every value line stays in the right-hand column */
+    grid-column: 1;
+    grid-row: 1 / span 4;
+    padding-top: 2px;
+    justify-self: stretch;
+  }
+  table.ft-rt-wide > tbody > tr > td[data-label=''],
+  table.ft-rt-wide > tbody > tr > td[data-primary],
+  table.ft-rt-wide > tbody > tr > td[data-full] {
+    display: block !important;
+  }
+  table.ft-rt-wide > tbody > tr > td[data-label='']::before,
+  table.ft-rt-wide > tbody > tr > td[data-primary]::before,
+  table.ft-rt-wide > tbody > tr > td[data-full]::before {
+    content: none;
+  }
+  table.ft-rt-wide > tbody > tr > td[data-primary] {
+    font-size: 14px;
+    padding-bottom: 6px !important;
+  }
+  table.ft-rt-wide > tbody > tr > td[data-full] {
+    padding: 8px 0 !important;
+  }
+  table.ft-rt-wide > tbody > tr > td:empty {
+    display: none !important;
+  }
+  table.ft-rt-wide > tbody > tr > td[data-label=''] {
+    padding-top: 8px !important;
+  }
+  table.ft-rt-wide > tbody > tr > td[data-label=''] button {
+    min-height: 34px;
+  }
+  /* Row checkbox: top-right corner of the card, clear of the name. */
+  table.ft-rt-wide > tbody > tr:has(> td[data-select]) > td[data-primary] {
+    padding-right: 36px !important;
+  }
+  table.ft-rt-wide > tbody > tr > td[data-select] {
+    position: absolute;
+    top: 12px;
+    right: 14px;
+    padding: 0 !important;
+  }
+  table.ft-rt-wide > tbody > tr > td[data-select] input {
+    width: 20px !important;
+    height: 20px !important;
+  }
+
+  table.ft-rt-wide > tbody > tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 24px;
+  }
+  table.ft-rt-wide > tbody > tr > td[data-primary],
+  table.ft-rt-wide > tbody > tr > td[data-full],
+  table.ft-rt-wide > tbody > tr > td[data-label='']:not([data-select]) {
+    grid-column: 1 / -1;
+  }
+}
+@media (max-width: 639.98px) {
+  table.ft-rt,
+  table.ft-rt > tbody {
+    display: block;
+    width: 100%;
+  }
+  table.ft-rt > thead {
+    display: none;
+  }
+  table.ft-rt > tbody > tr {
+    display: block;
+    position: relative;
+    padding: 12px 14px;
+  }
+  table.ft-rt > tbody > tr > td {
+    display: grid !important;
+    grid-template-columns: minmax(84px, 34%) minmax(0, 1fr);
+    column-gap: 10px;
+    row-gap: 0;
+    align-items: start;
+    justify-items: start;
+    width: auto !important;
+    padding: 4px 0 !important;
+    border: none !important;
+    text-align: left !important;
+    min-width: 0;
+  }
+  table.ft-rt > tbody > tr > td::before {
+    content: attr(data-label);
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #3f7489;
+    /* every value line stays in the right-hand column */
+    grid-column: 1;
+    grid-row: 1 / span 4;
+    padding-top: 2px;
+    justify-self: stretch;
+  }
+  table.ft-rt > tbody > tr > td[data-label=''],
+  table.ft-rt > tbody > tr > td[data-primary],
+  table.ft-rt > tbody > tr > td[data-full] {
+    display: block !important;
+  }
+  table.ft-rt > tbody > tr > td[data-label='']::before,
+  table.ft-rt > tbody > tr > td[data-primary]::before,
+  table.ft-rt > tbody > tr > td[data-full]::before {
+    content: none;
+  }
+  table.ft-rt > tbody > tr > td[data-primary] {
+    font-size: 14px;
+    padding-bottom: 6px !important;
+  }
+  table.ft-rt > tbody > tr > td[data-full] {
+    padding: 8px 0 !important;
+  }
+  table.ft-rt > tbody > tr > td:empty {
+    display: none !important;
+  }
+  table.ft-rt > tbody > tr > td[data-label=''] {
+    padding-top: 8px !important;
+  }
+  table.ft-rt > tbody > tr > td[data-label=''] button {
+    min-height: 34px;
+  }
+  /* Row checkbox: top-right corner of the card, clear of the name. */
+  table.ft-rt > tbody > tr:has(> td[data-select]) > td[data-primary] {
+    padding-right: 36px !important;
+  }
+  table.ft-rt > tbody > tr > td[data-select] {
+    position: absolute;
+    top: 12px;
+    right: 14px;
+    padding: 0 !important;
+  }
+  table.ft-rt > tbody > tr > td[data-select] input {
+    width: 20px !important;
+    height: 20px !important;
+  }
+
+  table.ft-rt-wide > tbody > tr {
+    display: block;
+  }
+}
+
+/* ---------- small phones ---------- */
+@media (max-width: 359.98px) {
+  .ft-kpi-value {
+    font-size: 22px !important;
+  }
+  table.ft-rt > tbody > tr > td {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+  table.ft-rt > tbody > tr > td::before {
+    grid-row: auto;
+  }
+  .ft-page-title {
+    font-size: 19px !important;
+  }
+}
+
+/* Tall dialogs on short laptop screens scroll too. */
+.ft-modal-card {
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+}

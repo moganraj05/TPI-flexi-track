@@ -50,7 +50,7 @@ export function ToastProvider({ children }) {
   return (
     <ToastContext.Provider value={toast}>
       {children}
-      <div style={theme.toastStack}>
+      <div className="ft-toast-stack" style={theme.toastStack}>
         {toasts.map((t) => (
           <div
             key={t.id}

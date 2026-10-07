@@ -7,7 +7,6 @@ const WHITE = 'FFFFFF';
 const HEADERS = [
   'Employee ID',
   'Name',
-  'Password',
   'Phone',
   'Email',
   'Shift Code',
@@ -49,7 +48,6 @@ async function buildTeamBulkTemplate(department, incharges) {
   const example = sheet.addRow([
     'EMP9001',
     'Example Worker',
-    'password123',
     '9000000000',
     'example.worker@flexitrack.com',
     'A',
@@ -66,7 +64,6 @@ async function buildTeamBulkTemplate(department, incharges) {
     { width: 16 },
     { width: 24 },
     { width: 16 },
-    { width: 16 },
     { width: 28 },
     { width: 12 },
     { width: 20 },
@@ -74,9 +71,9 @@ async function buildTeamBulkTemplate(department, incharges) {
     { width: 14 },
     { width: 20 },
   ];
-  sheet.autoFilter = { from: 'A1', to: 'J1' };
+  sheet.autoFilter = { from: 'A1', to: 'I1' };
 
-  sheet.getCell('L1').value = 'Required: Employee ID, Name, Password, Shift Code.';
+  sheet.getCell('L1').value = 'Required: Employee ID, Name, Shift Code. Passwords are generated — you download them after the upload.';
   sheet.getCell('L2').value = 'Shift Code must be one of A, B, C, D, E — see the "Shift codes" sheet.';
   sheet.getCell('L3').value = 'Fill either Incharge ID or Incharge Name (ID is safer — names can repeat).';
   sheet.getCell('L4').value = 'Delete the example row before uploading, or leave it — it will be skipped if the Employee ID already exists.';
@@ -120,7 +117,8 @@ async function parseTeamBulkFile(buffer) {
     if (text) headerMap[text] = colNumber;
   });
 
-  const required = ['employee id', 'name', 'password', 'shift code'];
+  // A "Password" column is optional (older templates have one).
+  const required = ['employee id', 'name', 'shift code'];
   const missing = required.filter((h) => !headerMap[h]);
   if (missing.length > 0) {
     return { rows: [], error: `Missing required column(s): ${missing.join(', ')}` };

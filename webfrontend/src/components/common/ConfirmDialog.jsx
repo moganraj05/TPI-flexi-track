@@ -54,7 +54,7 @@ export function ConfirmDialog({ title, message, confirmWord, confirmLabel = 'Dea
 
       {error && <div style={theme.errorText}>{error}</div>}
 
-      <div style={{ display: 'flex', gap: 8, marginTop: 20, justifyContent: 'flex-end' }}>
+      <div style={{ display: 'flex', gap: 8, marginTop: 20, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
         <button onClick={onCancel} disabled={busy} className="ft-btn ft-btn-secondary" style={theme.ghostBtn}>
           Cancel
         </button>

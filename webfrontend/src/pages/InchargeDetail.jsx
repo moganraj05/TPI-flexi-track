@@ -6,21 +6,22 @@ import { CenteredSpinner } from '../components/common/Spinner';
 import { EmptyState } from '../components/common/EmptyState';
 import { Avatar } from '../components/common/Avatar';
 import { NameLinkButton } from '../components/common/NameLinkButton';
+import { PasswordHistory } from '../components/common/PasswordHistory';
 import { memberShiftLabel } from '../utils/format';
 
 export function InchargeDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
 
-  const { data, isLoading, isError, error } = useQuery({
+  const { data, isPending: isLoading, isError, error } = useQuery({
     queryKey: ['hr-employee', id],
     queryFn: () => getEmployee(id),
   });
 
   if (isLoading) return <CenteredSpinner label="Loading incharge…" />;
-  if (isError) return <EmptyState title="Could not load incharge" message={error?.message} />;
+  if (isError && !data) return <EmptyState title="Could not load incharge" message={error?.message} />;
 
-  const { employee, directReports } = data;
+  const { employee, directReports, passwordHistory } = data;
   const workers = directReports || [];
 
   return (
@@ -44,6 +45,8 @@ export function InchargeDetail() {
         <Row label="Phone" value={employee.phone} />
         <Row label="Email" value={employee.email} noBorder />
       </div>
+
+      <PasswordHistory history={passwordHistory} />
 
       <div style={{ ...theme.card, padding: 0, overflow: 'hidden' }}>
         <div style={{ ...theme.sectionHeader, padding: '16px 16px 0' }}>

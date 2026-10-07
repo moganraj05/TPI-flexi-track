@@ -5,7 +5,8 @@ import { ErrorState, Loading, ProgressRing, ScreenHeader } from '../../component
 import { useMobileAuth } from '../../context/AuthContext';
 import { useMobileToast } from '../../context/ToastContext';
 import { usePollCountdown, useTodayPoll } from '../../hooks';
-import { api } from '../../api';
+import { api, isDeviceOffline } from '../../api';
+import { queueAnswer, useOutbox } from '../../offline/outbox';
 import { firstName, formatDisplayTime, formatShiftLabel, formatShortDate, greetingFor, pollDate, shiftName } from '../../utils';
 
 // Worker "Poll" tab: today's poll for the worker's shift, answer Yes / No,
@@ -21,9 +22,25 @@ export function WorkerHome() {
 
   const poll = query.data?.data ?? null;
   const visiblePoll = poll && poll.id !== expiredPollId ? poll : null;
+  // An answer given offline and not sent yet wins over what the server last
+  // said — it is what the worker chose.
+  const outbox = useOutbox(user?.id);
+  const saved = visiblePoll ? outbox.find((e) => e.pollId === visiblePoll.id) : null;
+  const myAnswer = saved ? saved.answer : visiblePoll?.myResponse?.answer ?? null;
+  const answeredAt = saved ? saved.queuedAt : visiblePoll?.myResponse?.answeredAt;
+
+  const saveForLater = (answer) => {
+    queueAnswer({ userId: user.id, pollId: visiblePoll.id, answer, closesAt: visiblePoll.closesAt });
+    setChangingAnswer(false);
+    toast('Saved on this phone', "It will be sent automatically when you're back online.");
+  };
 
   const handleRespond = async (answer) => {
     if (!visiblePoll) return;
+    if (isDeviceOffline()) {
+      saveForLater(answer);
+      return;
+    }
     setResponding(true);
     try {
       const result = await api.respondToPoll(visiblePoll.id, answer);
@@ -32,6 +49,12 @@ export function WorkerHome() {
       setChangingAnswer(false);
       toast(answer === 'yes' ? 'Marked as coming' : 'Marked as not coming');
     } catch (error) {
+      // No connection (Wi-Fi without internet, server unreachable): keep it
+      // and send it later instead of losing it.
+      if (error.status === 0) {
+        saveForLater(answer);
+        return;
+      }
       toast(error.message || 'Could not save your answer', 'Please try again', { variant: 'error' });
       // The poll may have closed meanwhile — refresh what's shown.
       queryClient.invalidateQueries({ queryKey: ['m', 'today-poll'] });
@@ -51,14 +74,16 @@ export function WorkerHome() {
       />
 
       <div className="m-body">
-        {query.isLoading ? (
+        {query.isPending ? (
           <Loading />
         ) : query.isError && !query.data ? (
           <ErrorState message={query.error.message} onRetry={() => query.refetch()} />
         ) : visiblePoll ? (
           <PollHeroCard
             poll={visiblePoll}
-            answering={changingAnswer ? null : visiblePoll.myResponse?.answer ?? null}
+            answering={changingAnswer ? null : myAnswer}
+            answeredAt={answeredAt}
+            waitingToSend={!!saved}
             responding={responding}
             onRespond={handleRespond}
             onChangeAnswer={() => setChangingAnswer(true)}
@@ -84,7 +109,7 @@ export function WorkerHome() {
   );
 }
 
-function PollHeroCard({ poll, answering, responding, onRespond, onChangeAnswer, onExpire }) {
+function PollHeroCard({ poll, answering, answeredAt, waitingToSend, responding, onRespond, onChangeAnswer, onExpire }) {
   const countdown = usePollCountdown(poll.opensAt, poll.closesAt, onExpire);
   const opens = new Date(poll.opensAt).getTime();
   const closes = poll.closesAt ? new Date(poll.closesAt).getTime() : opens;
@@ -148,7 +173,8 @@ function PollHeroCard({ poll, answering, responding, onRespond, onChangeAnswer, 
       {answering ? (
         <ResultCard
           answer={answering}
-          answeredAt={poll.myResponse?.answeredAt}
+          answeredAt={answeredAt}
+          waitingToSend={waitingToSend}
           canChange={countdown.isLive}
           onChange={onChangeAnswer}
         />
@@ -166,7 +192,7 @@ function PollHeroCard({ poll, answering, responding, onRespond, onChangeAnswer, 
   );
 }
 
-function ResultCard({ answer, answeredAt, canChange, onChange }) {
+function ResultCard({ answer, answeredAt, waitingToSend, canChange, onChange }) {
   const yes = answer === 'yes';
   const time = answeredAt ? formatDisplayTime(new Date(answeredAt)) : '';
   return (
@@ -178,9 +204,15 @@ function ResultCard({ answer, answeredAt, canChange, onChange }) {
         <div>
           <div className="m-result-title">{yes ? "You're coming" : "You're not coming"}</div>
           <div className="m-result-sub">
-            {yes ? 'Confirmed at ' : 'Recorded at '}
+            {waitingToSend ? 'Saved at ' : yes ? 'Confirmed at ' : 'Recorded at '}
             {time}
           </div>
+          {waitingToSend ? (
+            <div className="m-result-pending">
+              <Icon name="cloud-up" size={15} />
+              Waiting to send — goes out automatically when you&apos;re online
+            </div>
+          ) : null}
         </div>
       </div>
       {canChange ? (

@@ -4,7 +4,32 @@ export const TOKEN_KEY = 'flexitrack_hr_token';
 
 export const getToken = () => localStorage.getItem(TOKEN_KEY);
 export const setToken = (token) => localStorage.setItem(TOKEN_KEY, token);
-export const clearToken = () => localStorage.removeItem(TOKEN_KEY);
+export const clearToken = () => {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+};
+
+// The signed-in console user, remembered so the console still opens (with
+// its saved data) when the device is offline and the server can't confirm
+// the session. Cleared with the token.
+export const USER_KEY = 'flexitrack_hr_user';
+export const getCachedUser = () => {
+  try {
+    return JSON.parse(localStorage.getItem(USER_KEY) || 'null');
+  } catch {
+    return null;
+  }
+};
+export const setCachedUser = (user) => {
+  try {
+    localStorage.setItem(USER_KEY, JSON.stringify(user));
+  } catch {
+    // storage full / blocked — only offline start-up is affected
+  }
+};
+
+export const OFFLINE_CHANGE_MESSAGE = "You're offline — this change wasn't saved. Try again when you're back online.";
+const isOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
 
 // Default to whatever host the browser used to load this page — so opening
 // the app via the laptop's LAN IP (e.g. from a phone) automatically talks to
@@ -36,6 +61,13 @@ export const client = axios.create({ baseURL });
 export const socketURL = baseURL.replace(/\/api\/?$/, '') || window.location.origin;
 
 client.interceptors.request.use((config) => {
+  // Changes need the server: refuse them up front while offline (with a
+  // clear message) instead of letting them fail later or apply out of order.
+  if (isOffline() && (config.method || 'get').toLowerCase() !== 'get') {
+    const error = new Error(OFFLINE_CHANGE_MESSAGE);
+    error.offline = true;
+    return Promise.reject(error);
+  }
   const token = getToken();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
@@ -51,14 +83,20 @@ export const setUnauthorizedHandler = (handler) => {
 client.interceptors.response.use(
   (response) => response,
   (error) => {
+    if (error.offline) return Promise.reject(error);
     if (error.response?.status === 401 && onUnauthorized) {
       onUnauthorized();
     }
     const message =
       error.response?.data?.message ||
       (error.code === 'ERR_NETWORK'
-        ? 'Could not reach the FlexiTrack server. Check the API is running and reachable.'
+        ? isOffline()
+          ? "You're offline. Check your internet connection and try again."
+          : 'Could not reach the FlexiTrack server. Check your connection and try again.'
         : 'Something went wrong. Please try again.');
-    return Promise.reject(new Error(message));
+    const wrapped = new Error(message);
+    // 0 = the server could not be reached at all.
+    wrapped.status = error.response?.status ?? 0;
+    return Promise.reject(wrapped);
   }
 );

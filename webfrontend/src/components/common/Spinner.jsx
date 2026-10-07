@@ -1,4 +1,5 @@
 import { theme } from '../../theme';
+import { useOnline } from '../../hooks/useOnline';
 
 const MORPH_KEYFRAMES = `
 @keyframes ft-loader-morph {
@@ -51,7 +52,18 @@ export function Spinner({ size = 56, color }) {
   );
 }
 
+// Offline with nothing saved for this screen yet: say so instead of spinning
+// forever — it loads by itself once the connection is back.
 export function CenteredSpinner({ label }) {
+  const online = useOnline();
+  if (!online) {
+    return (
+      <div role="status" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, padding: '48px 16px', textAlign: 'center', color: theme.textSecondary, fontSize: 13 }}>
+        <span style={{ fontWeight: 800, fontSize: 15, color: theme.textPrimary }}>You&apos;re offline</span>
+        <span>This page hasn&apos;t been saved on this device yet. It loads by itself when you&apos;re back online.</span>
+      </div>
+    );
+  }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '48px 0', color: theme.textSecondary, fontSize: 13 }}>
       <Spinner />

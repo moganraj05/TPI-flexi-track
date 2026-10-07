@@ -12,6 +12,9 @@ const {
   consumeOtpInTx,
 } = require('../services/otp.service');
 const email = require('../services/email.service');
+const { recordAudit, personLabel, roleName } = require('../services/audit.service');
+const { InviteError, readInviteToken } = require('../services/staff-invite.service');
+const { emitStaffUpdate } = require('../realtime');
 
 const HR_ROLES = ['hr', 'admin', 'superadmin'];
 const APPROVER_ROLES = ['admin', 'superadmin'];
@@ -186,6 +189,15 @@ exports.completeRegistration = handle(async (req, res) => {
   }
 
   logger.info('hr_register.submitted', { userId: user.id, email: user.email });
+  await recordAudit(req, {
+    action: 'account.registration_submitted',
+    entityType: 'user',
+    entityId: user.id,
+    entityLabel: personLabel(user),
+    summary: `${personLabel(user)} registered for an HR login (waiting for approval)`,
+    metadata: { plant: user.department ? `${user.department.name} (${user.department.code})` : null },
+    actor: { id: user.id, name: user.name, role: 'hr', identifier: user.email },
+  });
 
   notify('registration_received', email.sendRegistrationReceivedEmail({ to: user.email, name: user.name }));
 
@@ -202,6 +214,7 @@ exports.completeRegistration = handle(async (req, res) => {
   };
   approvers.forEach((a) => notify('registration_admin_alert', email.sendNewRegistrationAdminEmail({ to: a.email, applicant })));
 
+  emitStaffUpdate({ userId: user.id, type: 'registered' });
   res.status(201).json({
     success: true,
     message: 'Registration submitted. An administrator must approve your account before you can sign in.',
@@ -267,14 +280,24 @@ exports.resetPassword = handle(async (req, res) => {
 
     return tx.user.update({
       where: { id: account.id },
-      data: { password: passwordHash, tokenVersion: { increment: 1 } },
+      data: { password: passwordHash, tokenVersion: { increment: 1 }, mustSetPassword: false },
       select: { id: true, name: true, email: true },
     });
   });
 
   logger.info('hr_reset.password_changed', { userId: user.id });
+  await recordAudit(req, {
+    action: 'auth.password_reset',
+    entityType: 'user',
+    entityId: user.id,
+    entityLabel: personLabel(user),
+    summary: `${user.name} reset their password with an email code (signed out everywhere)`,
+    changes: [{ field: 'password', label: 'Password', from: null, to: null, note: 'changed' }],
+    actor: { id: user.id, name: user.name, identifier: user.email },
+  });
   notify('password_changed', email.sendPasswordChangedEmail({ to: user.email, name: user.name }));
 
+  emitStaffUpdate({ userId: user.id, type: 'password_reset' });
   res.json({ success: true, message: 'Password updated. Please sign in with your new password.' });
 });
 
@@ -302,10 +325,23 @@ exports.approveHrRegistration = handle(async (req, res) => {
     return res.status(409).json({ success: false, message: 'This registration was already approved or rejected.' });
   }
 
-  const user = await prisma.user.findUnique({ where: { id: req.params.id }, select: { id: true, name: true, email: true } });
+  const user = await prisma.user.findUnique({ where: { id: req.params.id }, select: { id: true, name: true, email: true, employeeId: true } });
   logger.info('hr_register.approved', { userId: user.id, role, approvedBy: req.user.id });
+  await recordAudit(req, {
+    action: 'account.registration_approved',
+    entityType: 'user',
+    entityId: user.id,
+    entityLabel: personLabel(user),
+    summary: `Approved the HR registration of ${personLabel(user)} as ${roleName(role)}`,
+    changes: [
+      { field: 'approvalStatus', label: 'Approval', from: 'Pending', to: 'Approved' },
+      { field: 'role', label: 'Role', from: null, to: roleName(role) },
+    ],
+    metadata: { role },
+  });
   notify('registration_approved', email.sendApprovalEmail({ to: user.email, name: user.name }));
 
+  emitStaffUpdate({ userId: user.id, type: 'approved' });
   res.json({ success: true, message: `${user.name} approved` });
 });
 
@@ -315,7 +351,7 @@ exports.approveHrRegistration = handle(async (req, res) => {
 exports.rejectHrRegistration = handle(async (req, res) => {
   const user = await prisma.user.findFirst({
     where: { id: req.params.id, role: { in: HR_ROLES }, approvalStatus: 'pending' },
-    select: { id: true, name: true, email: true },
+    select: { id: true, name: true, email: true, employeeId: true },
   });
   if (!user) {
     return res.status(409).json({ success: false, message: 'This registration was already approved or rejected.' });
@@ -327,7 +363,71 @@ exports.rejectHrRegistration = handle(async (req, res) => {
   }
 
   logger.info('hr_register.rejected', { userId: user.id, rejectedBy: req.user.id });
+  await recordAudit(req, {
+    action: 'account.registration_rejected',
+    entityType: 'user',
+    entityId: user.id,
+    entityLabel: personLabel(user),
+    summary: `Rejected the HR registration of ${personLabel(user)} (the pending account was removed)`,
+  });
   notify('registration_rejected', email.sendRejectionEmail({ to: user.email, name: user.name }));
 
+  emitStaffUpdate({ userId: user.id, type: 'rejected' });
   res.json({ success: true, message: `${user.name}'s registration rejected` });
+});
+
+// ---------------------------------------------------------------------------
+// Staff invitations (an admin created the login; the person sets a password)
+// ---------------------------------------------------------------------------
+
+const inviteHandle = (fn) => async (req, res, next) => {
+  try {
+    await fn(req, res, next);
+  } catch (error) {
+    if (error instanceof InviteError) {
+      return res.status(error.status).json({ success: false, message: error.message });
+    }
+    next(error);
+  }
+};
+
+// Checks an invitation link before showing the set-password form, so a
+// used/expired/replaced link says so straight away.
+exports.verifyStaffInvite = inviteHandle(async (req, res) => {
+  const user = await readInviteToken(req.body.token);
+  res.json({ success: true, data: { name: user.name, email: user.email, role: roleName(user.role) } });
+});
+
+// Sets the invited person's own password. Bumping tokenVersion makes the link
+// single-use (and signs out any session, though there can't be one yet).
+exports.acceptStaffInvite = inviteHandle(async (req, res) => {
+  const user = await readInviteToken(req.body.ticket);
+  const passwordHash = await hashPassword(req.body.password);
+
+  const { count } = await prisma.user.updateMany({
+    where: { id: user.id, mustSetPassword: true, tokenVersion: user.tokenVersion },
+    data: {
+      password: passwordHash,
+      mustSetPassword: false,
+      emailVerifiedAt: new Date(),
+      tokenVersion: { increment: 1 },
+    },
+  });
+  if (count !== 1) {
+    return res.status(409).json({ success: false, message: 'This invitation has already been used. Sign in, or use “Forgot password?”.' });
+  }
+
+  logger.info('staff_invite.accepted', { userId: user.id });
+  await recordAudit(req, {
+    action: 'account.invite_accepted',
+    entityType: 'user',
+    entityId: user.id,
+    entityLabel: personLabel(user),
+    summary: `${personLabel(user)} accepted their invitation and set a password`,
+    changes: [{ field: 'password', label: 'Password', from: null, to: null, note: 'changed' }],
+    actor: { id: user.id, name: user.name, role: user.role, identifier: user.email },
+  });
+
+  emitStaffUpdate({ userId: user.id, type: 'invite_accepted' });
+  res.json({ success: true, message: 'Password set. You can now sign in with your email and new password.' });
 });

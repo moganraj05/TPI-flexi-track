@@ -17,6 +17,7 @@ const hrRoutes = require('./routes/hr.routes');
 const pushRoutes = require('./routes/push.routes');
 const { startReminderScheduler } = require('./services/reminder.service');
 const { startPollAutomation } = require('./services/poll-automation.service');
+const { startResetRequestJobs } = require('./services/password-reset.service');
 const { initRealtime } = require('./realtime');
 
 const app = express();
@@ -118,6 +119,7 @@ process.on('uncaughtException', (err) => {
 // wait for any in-flight tick, so they can't just be fire-and-forgotten.
 let reminderScheduler = null;
 let pollScheduler = null;
+let resetRequestScheduler = null;
 
 const startServer = async () => {
   await prisma.$connect();
@@ -131,6 +133,8 @@ const startServer = async () => {
     const automationMs = Number(process.env.POLL_AUTOMATION_INTERVAL_MS) || 60 * 1000;
     reminderScheduler = startReminderScheduler(reminderMs);
     pollScheduler = startPollAutomation(automationMs);
+    // Expires and moves up unanswered worker password reset requests.
+    resetRequestScheduler = startResetRequestJobs(Number(process.env.RESET_REQUEST_CHECK_INTERVAL_MS) || 5 * 60 * 1000);
   });
 };
 
@@ -153,6 +157,7 @@ const shutdown = (signal) => {
   const schedulersDone = Promise.all([
     reminderScheduler?.stop() ?? Promise.resolve(),
     pollScheduler?.stop() ?? Promise.resolve(),
+    resetRequestScheduler?.stop() ?? Promise.resolve(),
   ]);
 
   server.close(async () => {

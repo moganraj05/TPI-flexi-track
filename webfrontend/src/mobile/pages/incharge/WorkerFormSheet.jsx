@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { BottomSheet } from '../../components/BottomSheet';
-import { Button, PasswordInput, TextField } from '../../components/ui';
+import { Button, TextField } from '../../components/ui';
 import { useShiftCatalog } from '../../hooks';
 import { formatShiftLabel } from '../../utils';
 
@@ -18,7 +18,6 @@ export function WorkerFormSheet({ open, mode, worker, saving, onClose, onSubmit 
   const [employeeId, setEmployeeId] = useState('');
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
-  const [password, setPassword] = useState('');
   const [shiftCode, setShiftCode] = useState('');
   const [error, setError] = useState('');
 
@@ -29,7 +28,6 @@ export function WorkerFormSheet({ open, mode, worker, saving, onClose, onSubmit 
   useEffect(() => {
     if (!open) return;
     setError('');
-    setPassword('');
     // Re-picked by the effect below (it runs right after this one).
     setShiftCode('');
     if (isEditing && worker) {
@@ -57,14 +55,6 @@ export function WorkerFormSheet({ open, mode, worker, saving, onClose, onSubmit 
       setError('Employee ID and full name are required.');
       return;
     }
-    if (!isEditing && password.length < 6) {
-      setError('Password needs at least 6 characters.');
-      return;
-    }
-    if (isEditing && password && password.length < 6) {
-      setError('Password needs at least 6 characters.');
-      return;
-    }
     if (!shiftCode) {
       setError('Choose a shift.');
       return;
@@ -75,7 +65,6 @@ export function WorkerFormSheet({ open, mode, worker, saving, onClose, onSubmit 
         employeeId: employeeId.trim(),
         name: name.trim(),
         phone: phone.trim(),
-        password,
         shiftCode: shiftCode === KEEP_CURRENT ? undefined : shiftCode,
       });
     } catch (err) {
@@ -129,9 +118,9 @@ export function WorkerFormSheet({ open, mode, worker, saving, onClose, onSubmit 
 
           <fieldset className="m-fieldset">
             <legend className="m-field-label">Shift</legend>
-            {catalogQuery.isLoading ? (
+            {catalogQuery.isPending ? (
               <p className="m-hint">Loading shifts…</p>
-            ) : catalogQuery.isError ? (
+            ) : catalogQuery.isError && !catalogQuery.data ? (
               <p className="m-form-error">Could not load the shift list. Check your connection.</p>
             ) : (
               <div className="m-shift-grid">
@@ -157,14 +146,12 @@ export function WorkerFormSheet({ open, mode, worker, saving, onClose, onSubmit 
             <p className="m-hint">This worker gets a poll after each of these shifts ends, for the next one.</p>
           </fieldset>
 
-          <PasswordInput
-            label={isEditing ? 'New password' : 'Password *'}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder={isEditing ? 'Leave blank to keep current' : 'Min 6 characters'}
-            autoComplete="new-password"
-            error={!!error && (isEditing ? password.length > 0 && password.length < 6 : password.length < 6)}
-          />
+          {!isEditing && (
+            <p className="m-hint">
+              A temporary password is created for them and shown once after you add them. They choose their own password
+              the first time they sign in.
+            </p>
+          )}
 
           {error ? (
             <p className="m-form-error" role="alert">

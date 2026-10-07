@@ -58,7 +58,7 @@ export function WorkerHistory() {
       <ScreenHeader kicker="Your record" title="My attendance" name={user?.name} employeeId={user?.employeeId} profilePath="/profile" />
 
       <div className="m-body">
-        {query.isLoading ? (
+        {query.isPending ? (
           <Loading />
         ) : query.isError && !query.data ? (
           <ErrorState message={query.error.message} onRetry={() => query.refetch()} />

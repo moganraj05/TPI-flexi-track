@@ -29,7 +29,7 @@ export function AttendanceDetail() {
   // or null when no confirmation is open.
   const [markTarget, setMarkTarget] = useState(null);
 
-  const { data, isLoading, isError, error } = useQuery({
+  const { data, isPending: isLoading, isError, error } = useQuery({
     queryKey: ['hr-poll-detail', pollId],
     queryFn: () => getPollDetail(pollId),
   });
@@ -54,7 +54,7 @@ export function AttendanceDetail() {
   };
 
   if (isLoading) return <CenteredSpinner label="Loading poll…" />;
-  if (isError) return <EmptyState title="Could not load poll" message={error?.message} />;
+  if (isError && !data) return <EmptyState title="Could not load poll" message={error?.message} />;
 
   const { poll, summary } = data;
 

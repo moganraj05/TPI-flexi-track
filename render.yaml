@@ -46,6 +46,9 @@ services:
       # (comma-separate several; no trailing slash).
       - key: CORS_ALLOWED_ORIGINS
         sync: false
+      # The Vercel site address again, for links in emails (staff invitations).
+      - key: PUBLIC_APP_URL
+        sync: false
       # Web Push keys: `npm run push:vapid-keys` in backend/, once.
       - key: WEB_PUSH_VAPID_PUBLIC_KEY
         sync: false

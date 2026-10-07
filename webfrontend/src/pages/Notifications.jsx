@@ -7,6 +7,9 @@ import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { FilterChips } from '../components/common/FilterChips';
 import { PlantSelect } from '../components/common/PlantSelect';
 import { useToast } from '../context/ToastContext';
+import { useAuth } from '../context/AuthContext';
+import { EmptyState } from '../components/common/EmptyState';
+import { isAdminRole } from '../utils/roles';
 
 const TARGETS = [
   { value: 'all', label: 'All workers' },
@@ -30,6 +33,7 @@ const fieldStyle = { ...theme.input, background: theme.surface };
 // announcements. Delivered to every device a worker turned notifications on
 // for (browser / installed web app) and to the Android APK.
 export function Notifications() {
+  const { user } = useAuth();
   const toast = useToast();
   const [target, setTarget] = useState('all');
   const [departmentId, setDepartmentId] = useState('');
@@ -42,6 +46,10 @@ export function Notifications() {
   const [result, setResult] = useState(null);
 
   const { data: departments } = useQuery({ queryKey: ['hr-departments'], queryFn: getDepartments, staleTime: 5 * 60 * 1000 });
+  if (!isAdminRole(user?.role)) {
+    return <EmptyState title="Admins only" message="Sending notifications to workers is available to admin logins." />;
+  }
+
   const plantOptions = [
     { value: '', label: 'Choose a plant' },
     ...(departments || []).filter((d) => d.isActive !== false).map((d) => ({ value: d.id, label: `${d.name} (${d.code})` })),
@@ -92,7 +100,7 @@ export function Notifications() {
   return (
     <>
       <div>
-        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: theme.textPrimary }}>Notifications</h1>
+        <h1 className="ft-page-title" style={{ margin: 0, fontSize: 24, fontWeight: 800, color: theme.textPrimary }}>Notifications</h1>
         <div style={{ fontSize: 13, color: theme.textSecondary, marginTop: 4 }}>
           Send a message to workers&apos; phones — for a demo or a short announcement.
         </div>

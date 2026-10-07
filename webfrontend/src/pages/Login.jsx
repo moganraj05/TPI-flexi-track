@@ -4,6 +4,7 @@ import { theme } from '../theme';
 import { useAuth } from '../context/AuthContext';
 import { AuthLayout } from '../components/auth/AuthLayout';
 import { authLinkStyle } from '../components/auth/authStyles';
+import { PasswordInput } from '../components/common/PasswordInput';
 
 // Small stroke icons for the input fields — no icon library in this project,
 // and two glyphs don't justify adding one.
@@ -24,7 +25,7 @@ function LockIcon(props) {
   );
 }
 
-const fieldIconStyle = { position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', color: theme.mutedColor, pointerEvents: 'none' };
+const fieldIconStyle = { position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', color: theme.mutedColor, pointerEvents: 'none', zIndex: 1 };
 const fieldInputStyle = { ...theme.input, paddingLeft: 38 };
 
 export function Login() {
@@ -80,8 +81,7 @@ export function Login() {
           </div>
           <div style={{ position: 'relative' }}>
             <LockIcon style={fieldIconStyle} />
-            <input
-              type="password"
+            <PasswordInput
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}

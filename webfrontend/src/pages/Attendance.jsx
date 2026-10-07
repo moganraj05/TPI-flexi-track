@@ -34,7 +34,7 @@ export function Attendance() {
   });
   const selectedShift = (shiftCatalog || []).find((s) => s.code === shiftCode);
 
-  const { data, isLoading } = useQuery({
+  const { data, isPending: isLoading } = useQuery({
     queryKey: ['hr-polls', 'closed', plantFilter, shiftCode, dateFilter, page],
     queryFn: () =>
       getPolls({

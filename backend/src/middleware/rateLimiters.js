@@ -59,4 +59,15 @@ const otpVerifyLimiter = rateLimit({
   message: { success: false, message: 'Too many attempts. Please try again later.' },
 });
 
-module.exports = { loginLimiter, sensitiveLimiter, apiLimiter, otpSendLimiter, otpVerifyLimiter };
+// Worker app "Forgot password?" — per IP, on top of the per-person daily
+// limit in password-reset.service.js. Sized for a factory where every phone
+// may share one public IP.
+const forgotPasswordLimiter = rateLimit({
+  windowMs: Number(process.env.RATE_LIMIT_FORGOT_WINDOW_MS) || 15 * 60 * 1000,
+  max: Number(process.env.RATE_LIMIT_FORGOT_MAX) || 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many requests. Please try again in a few minutes.' },
+});
+
+module.exports = { loginLimiter, sensitiveLimiter, apiLimiter, otpSendLimiter, otpVerifyLimiter, forgotPasswordLimiter };

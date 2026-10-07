@@ -51,7 +51,7 @@ export function Reports() {
   });
   const selectedShift = (shiftCatalog || []).find((s) => s.code === shiftCode);
 
-  const { data, isLoading } = useQuery({
+  const { data, isPending: isLoading } = useQuery({
     queryKey: ['hr-polls', status, plantFilter, shiftCode, fromDate, toDate, page],
     queryFn: () =>
       getPolls({

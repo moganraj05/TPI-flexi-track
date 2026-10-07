@@ -37,6 +37,15 @@ export const useInchargePoll = (pollId) =>
 
 export const useTeam = () => useQuery({ queryKey: ['m', 'team'], queryFn: api.getTeamWorkers, ...live });
 
+// status: 'pending' (default) | 'done'. meta.pendingCount feeds the tab badge.
+export const useResetRequests = (status = 'pending', { enabled = true } = {}) =>
+  useQuery({
+    queryKey: ['m', 'reset-requests', status],
+    queryFn: () => api.getResetRequests(status),
+    enabled,
+    ...live,
+  });
+
 export const useShiftCatalog = () =>
   useQuery({ queryKey: ['m', 'shifts'], queryFn: api.getShiftCatalog, staleTime: Infinity });
 

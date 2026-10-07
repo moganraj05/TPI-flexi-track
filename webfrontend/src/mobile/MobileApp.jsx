@@ -1,16 +1,22 @@
 import { lazy, Suspense, useEffect } from 'react';
 import { Navigate, Outlet, Route, Routes } from 'react-router-dom';
 import './mobile.css';
+import './fonts';
 import { TabBar } from './components/TabBar';
 import { Loading } from './components/ui';
 import { MobileAuthProvider, useMobileAuth } from './context/AuthContext';
 import { MobileRealtimeProvider } from './context/RealtimeContext';
 import { MobileThemeProvider, useMobileTheme } from './context/ThemeContext';
 import { MobileToastProvider } from './context/ToastContext';
-import { useTodayPoll } from './hooks';
+import { useResetRequests, useTodayPoll } from './hooks';
 import { hasStaffSession } from './api';
 import { LoginPage } from './pages/Login';
+import { SetOwnPassword } from './pages/SetOwnPassword';
+import { ForgotPasswordPage } from './pages/ForgotPassword';
 import { homeRouteFor, isInchargeRole } from './utils';
+import { OutboxSync } from './offline/OutboxSync';
+import { OfflineBanner } from './offline/OfflineBanner';
+import { useOutbox } from './offline/outbox';
 
 // Screens load on demand — a worker never downloads the incharge screens.
 const WorkerHome = lazy(() => import('./pages/worker/Home').then((m) => ({ default: m.WorkerHome })));
@@ -18,29 +24,14 @@ const WorkerHistory = lazy(() => import('./pages/worker/History').then((m) => ({
 const ProfilePage = lazy(() => import('./pages/Profile').then((m) => ({ default: m.ProfilePage })));
 const InchargeDashboard = lazy(() => import('./pages/incharge/Dashboard').then((m) => ({ default: m.InchargeDashboard })));
 const InchargeTeam = lazy(() => import('./pages/incharge/Team').then((m) => ({ default: m.InchargeTeam })));
+const InchargeRequests = lazy(() => import('./pages/incharge/Requests').then((m) => ({ default: m.InchargeRequests })));
 const InchargePollDetail = lazy(() =>
   import('./pages/incharge/PollDetail').then((m) => ({ default: m.InchargePollDetail }))
 );
 
-// The app's own typefaces (same as the Expo app), loaded only when this part
-// of the site is opened — the HR console never pays for them.
-const FONTS_HREF =
-  'https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap';
-function useAppFonts() {
-  useEffect(() => {
-    if (document.querySelector('link[data-ft-mobile-fonts]')) return;
-    const link = document.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = FONTS_HREF;
-    link.dataset.ftMobileFonts = 'true';
-    document.head.appendChild(link);
-  }, []);
-}
-
 // The worker / incharge app — the web version of the Expo mobile app,
 // mounted at "/" by App.jsx (the HR console lives under /staff).
 export default function MobileApp() {
-  useAppFonts();
   useEffect(() => {
     document.title = 'FlexiTrack';
   }, []);
@@ -51,10 +42,14 @@ export default function MobileApp() {
         <MobileAuthProvider>
           <MobileRealtimeProvider>
             <MobileToastProvider>
+              <OfflineBanner />
+              <OutboxSync />
               <Suspense fallback={<Loading />}>
                 <Routes>
                   <Route index element={<RootRedirect />} />
                   <Route path="login" element={<LoginPage />} />
+                  <Route path="set-password" element={<SetOwnPassword />} />
+                  <Route path="forgot" element={<ForgotPasswordPage />} />
 
                   <Route element={<RequireRole kind="worker" />}>
                     <Route element={<TabLayout />}>
@@ -68,6 +63,7 @@ export default function MobileApp() {
                     <Route element={<TabLayout />}>
                       <Route index element={<InchargeDashboard />} />
                       <Route path="team" element={<InchargeTeam />} />
+                      <Route path="requests" element={<InchargeRequests />} />
                       <Route path="profile" element={<ProfilePage />} />
                     </Route>
                     <Route path="poll/:id" element={<InchargePollDetail />} />
@@ -99,7 +95,7 @@ function ThemedRoot({ children }) {
 function RootRedirect() {
   const { status, user } = useMobileAuth();
   if (status === 'loading') return <Loading />;
-  if (status === 'authed' && user) return <Navigate to={homeRouteFor(user.role)} replace />;
+  if (status === 'authed' && user) return <Navigate to={user.mustChangePassword ? '/set-password' : homeRouteFor(user.role)} replace />;
   if (hasStaffSession()) return <Navigate to="/staff/app/dashboard" replace />;
   return <Navigate to="/login" replace />;
 }
@@ -111,6 +107,8 @@ function RequireRole({ kind }) {
   const { status, user } = useMobileAuth();
   if (status === 'loading') return <Loading />;
   if (status !== 'authed' || !user) return <Navigate to="/login" replace />;
+  // A temporary password (or an admin's request): set a new one first.
+  if (user.mustChangePassword) return <Navigate to="/set-password" replace />;
   const isIncharge = isInchargeRole(user.role);
   if ((kind === 'incharge') !== isIncharge) return <Navigate to={homeRouteFor(user.role)} replace />;
   return <Outlet />;
@@ -124,7 +122,7 @@ function TabLayout() {
       <Suspense fallback={<Loading />}>
         <Outlet />
       </Suspense>
-      {incharge ? <TabBar isIncharge /> : <WorkerTabBar />}
+      {incharge ? <InchargeTabBar /> : <WorkerTabBar />}
     </>
   );
 }
@@ -132,8 +130,18 @@ function TabLayout() {
 // The worker's tab bar shows a dot on "Poll" while today's poll is still
 // unanswered (shares the Poll screen's cached query — no extra request).
 function WorkerTabBar() {
+  const { user } = useMobileAuth();
   const { data } = useTodayPoll();
+  const outbox = useOutbox(user?.id);
   const poll = data?.data;
-  const unanswered = !!poll && !poll.myResponse && new Date(poll.opensAt) <= new Date();
+  const savedOffline = !!poll && outbox.some((e) => e.pollId === poll.id);
+  const unanswered = !!poll && !poll.myResponse && !savedOffline && new Date(poll.opensAt) <= new Date();
   return <TabBar pollUnanswered={unanswered} />;
+}
+
+// The incharge's tab bar shows how many password reset requests are waiting
+// (kept live by the "reset:update" socket event).
+function InchargeTabBar() {
+  const { data } = useResetRequests('pending');
+  return <TabBar isIncharge requestCount={data?.meta?.pendingCount ?? 0} />;
 }

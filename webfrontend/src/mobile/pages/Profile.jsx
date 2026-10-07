@@ -1,17 +1,22 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Icon } from '../components/Icon';
+import { BottomSheet } from '../components/BottomSheet';
 import { InstallCard } from '../components/InstallCard';
+import { OwnPasswordForm } from '../components/OwnPasswordForm';
 import { NotificationSettings } from '../components/NotificationSettings';
 import { ThemeSettings } from '../components/ThemeSettings';
 import { Avatar, Button, DetailRow } from '../components/ui';
 import { useMobileAuth } from '../context/AuthContext';
+import { useMobileToast } from '../context/ToastContext';
 import { formatShiftLabel, isInchargeRole, roleLabel } from '../utils';
 
 // Profile tab, shared by workers and incharges (they differ only in which
 // details are listed and what the notification card says it's for).
 export function ProfilePage() {
-  const { user, logout } = useMobileAuth();
+  const { user, logout, applyNewSession } = useMobileAuth();
+  const toast = useMobileToast();
+  const [changingPassword, setChangingPassword] = useState(false);
   const navigate = useNavigate();
   const [signingOut, setSigningOut] = useState(false);
   const incharge = isInchargeRole(user?.role);
@@ -44,6 +49,21 @@ export function ProfilePage() {
           <DetailRow label="Phone" value={user?.phone || 'Not set'} />
         </section>
 
+        <section className="m-card m-setting-card">
+          <div className="m-setting-row">
+            <span className="m-setting-icon m-tint-brand">
+              <Icon name="lock" size={20} />
+            </span>
+            <div className="m-setting-text">
+              <div className="m-setting-title">Password</div>
+              <div className="m-setting-sub">Change the password you sign in with.</div>
+            </div>
+            <Button variant="field" className="m-btn-sm" onClick={() => setChangingPassword(true)}>
+              Change
+            </Button>
+          </div>
+        </section>
+
         <NotificationSettings
           helper={
             incharge
@@ -62,6 +82,23 @@ export function ProfilePage() {
         </Button>
         <p className="m-version m-mono">flexitrack web</p>
       </div>
+
+      <BottomSheet open={changingPassword} onClose={() => setChangingPassword(false)} labelledBy="change-password-title">
+        <h2 id="change-password-title" className="m-sheet-title">
+          Change password
+        </h2>
+        <OwnPasswordForm
+          user={user}
+          askCurrent
+          submitLabel="Save password"
+          onCancel={() => setChangingPassword(false)}
+          onDone={({ token, user: nextUser }) => {
+            applyNewSession({ token, user: nextUser });
+            setChangingPassword(false);
+            toast('Password changed', 'Signed out on your other devices');
+          }}
+        />
+      </BottomSheet>
     </div>
   );
 }

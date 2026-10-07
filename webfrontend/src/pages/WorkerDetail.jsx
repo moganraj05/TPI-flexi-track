@@ -8,6 +8,7 @@ import { EmptyState } from '../components/common/EmptyState';
 import { Avatar } from '../components/common/Avatar';
 import { RosterRow } from '../components/common/RosterRow';
 import { Pagination } from '../components/common/Pagination';
+import { PasswordHistory } from '../components/common/PasswordHistory';
 import { formatDate, memberShiftLabel } from '../utils/format';
 
 const HISTORY_PAGE_SIZE = 10;
@@ -25,7 +26,7 @@ export function WorkerDetail() {
     setPage(1);
   }, [id]);
 
-  const { data, isLoading, isFetching, isError, error } = useQuery({
+  const { data, isPending: isLoading, isFetching, isError, error } = useQuery({
     queryKey: ['hr-employee', id, page],
     queryFn: () => getEmployee(id, { page, limit: HISTORY_PAGE_SIZE }),
   });
@@ -40,9 +41,9 @@ export function WorkerDetail() {
   }, [data, page]);
 
   if (isLoading) return <CenteredSpinner label="Loading worker…" />;
-  if (isError) return <EmptyState title="Could not load worker" message={error?.message} />;
+  if (isError && !data) return <EmptyState title="Could not load worker" message={error?.message} />;
 
-  const { employee, history, meta } = data;
+  const { employee, history, meta, passwordHistory } = data;
   const incharge = employee.incharge;
   const pageCount = meta?.pageCount || 1;
 
@@ -98,6 +99,8 @@ export function WorkerDetail() {
           />
         </div>
       )}
+
+      <PasswordHistory history={passwordHistory} />
 
       <div style={{ ...theme.card, padding: 0, overflow: 'hidden' }}>
         <div style={{ ...theme.sectionHeader, padding: '16px 16px 0' }}>Recent responses</div>

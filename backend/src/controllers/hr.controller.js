@@ -17,10 +17,72 @@ const {
 const { DEFAULT_SHIFT_START, DEFAULT_SHIFT_END } = require('../utils/shift');
 const { resolveShift, getShiftByTimes, getShiftCatalog, getShiftByCode, formatShiftName } = require('../config/shiftCatalog');
 const { buildTeamBulkTemplate, parseTeamBulkFile } = require('../services/bulk-import.service');
-const { signToken } = require('../utils/jwt');
+const { signToken, revokeSession, renewedToken } = require('../utils/jwt');
 const { comparePassword, hashPassword, DUMMY_HASH } = require('../utils/password');
-const { emitPollUpdate, emitFollowUpUpdate } = require('../realtime');
+const { emitPollUpdate, emitFollowUpUpdate, emitStaffUpdate, emitWorkforceUpdate } = require('../realtime');
 const logger = require('../utils/logger');
+const { recordAudit, diffChanges, personLabel, roleName } = require('../services/audit.service');
+const crypto = require('crypto');
+const { INVITE_TTL_HOURS, createInviteToken, inviteLink } = require('../services/staff-invite.service');
+const { tempPasswordData } = require('../services/temp-password.service');
+const { sendStaffInviteEmail } = require('../services/email.service');
+const { passwordHistoryFor } = require('./reset-requests.controller');
+
+// Roles an admin can give a console login: Staff (hr) or Admin (admin).
+// Existing superadmin accounts keep working (and show as "Admin"); new ones
+// are only created by the seed script.
+const ASSIGNABLE_STAFF_ROLES = ['hr', 'admin'];
+
+// Emails the invitation link. Returns true when it was handed to the email
+// provider; false when sending failed (the login still exists, and an admin
+// can use "Resend invitation").
+async function emailStaffInvite(req, user) {
+  try {
+    await sendStaffInviteEmail({
+      to: user.email,
+      name: user.name,
+      roleLabel: roleName(user.role),
+      invitedBy: req.user?.name || 'An administrator',
+      link: inviteLink(req, createInviteToken(user)),
+      expiresInHours: INVITE_TTL_HOURS,
+    });
+    return true;
+  } catch (error) {
+    logger.error('email.invite_send_failed', { userId: user.id, error: error.message });
+    return false;
+  }
+}
+
+// ---- audit helpers ----
+// Human-readable snapshot of a worker/incharge for the audit trail's
+// before -> after list (person rows loaded with personSelect).
+const memberSnapshot = (p) =>
+  p && {
+    name: p.name,
+    phone: p.phone || '',
+    email: p.email || '',
+    plant: p.department ? `${p.department.name} (${p.department.code})` : '',
+    shift: p.shiftStart && p.shiftEnd ? formatShiftName(p.shiftStart, p.shiftEnd) : '',
+    incharge: p.incharge ? p.incharge.name : '',
+    equipment: p.equipment || '',
+    process: p.process || '',
+    status: p.isActive === false ? 'Inactive' : 'Active',
+  };
+const MEMBER_AUDIT_FIELDS = [
+  { key: 'name', label: 'Name' },
+  { key: 'phone', label: 'Phone' },
+  { key: 'email', label: 'Email' },
+  { key: 'plant', label: 'Plant' },
+  { key: 'shift', label: 'Shift' },
+  { key: 'incharge', label: 'Incharge' },
+  { key: 'equipment', label: 'Equipment' },
+  { key: 'process', label: 'Process' },
+  { key: 'status', label: 'Status' },
+  { key: 'password', label: 'Password' },
+];
+const roleWord = (role) => (role === 'incharge' ? 'incharge' : 'worker');
+const pollLabel = (poll) => `${poll.shift} · ${new Date(poll.date).toISOString().slice(0, 10)}${poll.department?.code ? ` · ${poll.department.code}` : ''}`;
+const answerLabel = (answer) => (answer === 'yes' ? 'Coming' : answer === 'no' ? 'Not coming' : null);
 const { notificationChannelSelect, hasNotificationChannel, reachableWhere, notifyUsers } = require('../services/notification.service');
 
 // Parses optional fromDate/toDate — same YYYY-MM-DD-only format and UTC
@@ -65,6 +127,9 @@ const formatHrUser = (user) => ({
   role: user.role,
   isActive: user.isActive !== false,
   approvalStatus: user.approvalStatus || 'approved',
+  // Invited by an admin and hasn't set a password yet (can't sign in).
+  invitePending: user.mustSetPassword === true,
+  invitedAt: user.invitedAt || null,
   department: user.department ? { id: user.department.id, name: user.department.name, code: user.department.code } : null,
   createdAt: user.createdAt || null,
 });
@@ -97,6 +162,9 @@ const formatWorker = (w) => ({
   shiftName: w.shiftName || '',
   isActive: w.isActive !== false,
   hasNotifications: hasNotificationChannel(w),
+  // Signed up with / was given a temporary password and hasn't set their own yet.
+  mustChangePassword: w.mustChangePassword === true,
+  tempPasswordExpiresAt: w.tempPasswordExpiresAt || null,
 });
 
 const summarizeLivePolls = async (polls) => {
@@ -169,6 +237,8 @@ const personSelect = {
   shiftName: true,
   isActive: true,
   ...notificationChannelSelect,
+  mustChangePassword: true,
+  tempPasswordExpiresAt: true,
   department: { select: departmentSelect },
   incharge: { select: inchargeSelect },
 };
@@ -183,6 +253,8 @@ const hrUserSelect = {
   role: true,
   isActive: true,
   approvalStatus: true,
+  mustSetPassword: true,
+  invitedAt: true,
   createdAt: true,
   department: { select: departmentSelect },
 };
@@ -214,17 +286,38 @@ exports.login = async (req, res, next) => {
     // unknown) so the response time is the same either way, and the account's
     // status is only revealed to someone who already knows its password.
     const isMatch = await comparePassword(String(password), user?.password || DUMMY_HASH);
+    const signInFailed = (reason) =>
+      recordAudit(req, {
+        action: 'auth.staff_sign_in_failed',
+        entityType: 'user',
+        entityId: user?.id,
+        entityLabel: email,
+        summary: `Failed staff sign-in for ${email}`,
+        metadata: { reason },
+        actor: { name: user && isMatch ? user.name : null, role: user && isMatch ? user.role : null, identifier: email },
+      });
+
     if (!user || !isMatch || !HR_ROLES.includes(user.role)) {
-      return res.status(401).json({ success: false, message: 'Invalid HR credentials' });
+      await signInFailed(
+        !user ? 'unknown_email' : user.mustSetPassword ? 'invite_not_accepted' : !isMatch ? 'wrong_password' : 'not_a_staff_account'
+      );
+      // Same message whatever the reason, so it can't reveal which emails
+      // have accounts; the second sentence helps newly invited people.
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid email or password. New here? Set your password with the link in your invitation email first.',
+      });
     }
 
     if (user.approvalStatus === 'pending') {
+      await signInFailed('awaiting_approval');
       return res.status(403).json({
         success: false,
         message: 'Your account is waiting for administrator approval. You will receive an email once it is approved.',
       });
     }
     if (!user.isActive) {
+      await signInFailed('account_deactivated');
       return res.status(403).json({
         success: false,
         message: 'This account has been deactivated. Please contact your administrator.',
@@ -232,6 +325,14 @@ exports.login = async (req, res, next) => {
     }
 
     const token = signToken(user);
+    await recordAudit(req, {
+      action: 'auth.staff_signed_in',
+      entityType: 'user',
+      entityId: user.id,
+      entityLabel: personLabel(user),
+      summary: `${user.name} signed in to the staff console`,
+      actor: { id: user.id, name: user.name, role: user.role, identifier: user.email },
+    });
     res.json({ success: true, data: { token, user: formatHrUser(user) } });
   } catch (error) {
     next(error);
@@ -239,14 +340,21 @@ exports.login = async (req, res, next) => {
 };
 
 exports.getMe = async (req, res) => {
-  res.json({ success: true, data: formatHrUser(req.user) });
+  // `token`: a renewed token when the current one is old (the console saves
+  // it), so an active user is never signed out by expiry.
+  res.json({ success: true, data: formatHrUser(req.user), token: renewedToken(req.user, req.auth) });
 };
 
 exports.logout = async (req, res, next) => {
   try {
-    await prisma.user.update({
-      where: { id: req.user.id },
-      data: { tokenVersion: { increment: 1 } },
+    // This browser only — the same login stays signed in elsewhere.
+    await revokeSession(req.auth, req.user.id);
+    await recordAudit(req, {
+      action: 'auth.staff_signed_out',
+      entityType: 'user',
+      entityId: req.user.id,
+      entityLabel: personLabel(req.user),
+      summary: `${req.user.name} signed out of the staff console`,
     });
     res.json({ success: true, message: 'Logged out' });
   } catch (error) {
@@ -435,10 +543,25 @@ exports.markAttendance = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Worker not found' });
     }
 
+    const previous = await prisma.response.findUnique({
+      where: { pollId_userId: { pollId: poll.id, userId: worker.id } },
+      select: { answer: true },
+    });
+
     await prisma.response.upsert({
       where: { pollId_userId: { pollId: poll.id, userId: worker.id } },
       create: { pollId: poll.id, userId: worker.id, answer, answeredAt: new Date() },
       update: { answer, answeredAt: new Date() },
+    });
+
+    await recordAudit(req, {
+      action: 'attendance.marked',
+      entityType: 'poll',
+      entityId: poll.id,
+      entityLabel: pollLabel(poll),
+      summary: `Marked ${personLabel(worker)} as ${answerLabel(answer).toLowerCase()} for ${pollLabel(poll)}`,
+      changes: [{ field: 'answer', label: 'Answer', from: answerLabel(previous?.answer) ?? 'No response', to: answerLabel(answer) }],
+      metadata: { workerId: worker.id, workerEmployeeId: worker.employeeId },
     });
 
     emitPollUpdate({ pollId: poll.id, departmentId: poll.departmentId, workerId: worker.id, type: 'response' });
@@ -635,6 +758,13 @@ exports.createDepartment = async (req, res, next) => {
     }
 
     const dept = await prisma.department.create({ data: { name: name.trim(), code: normalizedCode } });
+    await recordAudit(req, {
+      action: 'plant.created',
+      entityType: 'plant',
+      entityId: dept.id,
+      entityLabel: `${dept.name} (${dept.code})`,
+      summary: `Created plant ${dept.name} (${dept.code})`,
+    });
     res.status(201).json({ success: true, message: 'Plant created', data: formatDept(dept) });
   } catch (error) {
     next(error);
@@ -677,6 +807,25 @@ exports.updateDepartment = async (req, res, next) => {
     }
 
     const updated = await prisma.department.update({ where: { id: dept.id }, data });
+    const plantChanges = diffChanges(
+      { name: dept.name, code: dept.code, status: dept.isActive ? 'Active' : 'Inactive' },
+      { name: updated.name, code: updated.code, status: updated.isActive ? 'Active' : 'Inactive' },
+      [
+        { key: 'name', label: 'Name' },
+        { key: 'code', label: 'Code' },
+        { key: 'status', label: 'Status' },
+      ]
+    );
+    if (plantChanges.length) {
+      await recordAudit(req, {
+        action: 'plant.updated',
+        entityType: 'plant',
+        entityId: dept.id,
+        entityLabel: `${updated.name} (${updated.code})`,
+        summary: `Updated plant ${updated.name} (${updated.code}): ${plantChanges.map((c) => c.label.toLowerCase()).join(', ')}`,
+        changes: plantChanges,
+      });
+    }
     res.json({ success: true, message: 'Plant updated', data: formatDept(updated) });
   } catch (error) {
     next(error);
@@ -701,6 +850,14 @@ exports.deactivateDepartment = async (req, res, next) => {
     }
 
     await prisma.department.update({ where: { id: dept.id }, data: { isActive: false } });
+    await recordAudit(req, {
+      action: 'plant.deactivated',
+      entityType: 'plant',
+      entityId: dept.id,
+      entityLabel: `${dept.name} (${dept.code})`,
+      summary: `Deactivated plant ${dept.name} (${dept.code})`,
+      changes: [{ field: 'status', label: 'Status', from: 'Active', to: 'Inactive' }],
+    });
     res.json({ success: true, message: 'Plant deactivated' });
   } catch (error) {
     next(error);
@@ -723,17 +880,14 @@ exports.createTeamMember = async (req, res, next) => {
       incharge,
     } = req.body;
 
-    if (!employeeId?.trim() || !name?.trim() || !password || !role || !department) {
+    if (!employeeId?.trim() || !name?.trim() || !role || !department) {
       return res.status(400).json({
         success: false,
-        message: 'Employee ID, name, password, role and plant are required',
+        message: 'Employee ID, name, role and plant are required',
       });
     }
     if (!['worker', 'incharge'].includes(role)) {
       return res.status(400).json({ success: false, message: 'Role must be worker or incharge' });
-    }
-    if (password.length < 6) {
-      return res.status(400).json({ success: false, message: 'Password must be at least 6 characters' });
     }
 
     const dept = await prisma.department.findUnique({ where: { id: department } });
@@ -763,13 +917,16 @@ exports.createTeamMember = async (req, res, next) => {
       inchargeId = inchargeDoc.id;
     }
 
+    // Every new account starts with its own temporary password (generated
+    // unless one was sent), and must set a personal one at first sign-in.
+    const temp = await tempPasswordData('new_account', password || undefined);
     const member = await prisma.user.create({
       data: {
         employeeId: normalizedId,
         name: name.trim(),
         email: email?.trim() || null,
         phone: phone?.trim() || '',
-        password: await hashPassword(password),
+        ...temp.data,
         role,
         departmentId: dept.id,
         inchargeId,
@@ -789,10 +946,27 @@ exports.createTeamMember = async (req, res, next) => {
       select: personSelect,
     });
 
+    const createdSnapshot = memberSnapshot(populated);
+    await recordAudit(req, {
+      action: 'member.created',
+      entityType: 'user',
+      entityId: member.id,
+      entityLabel: personLabel(populated),
+      summary: `Added ${roleWord(role)} ${personLabel(populated)} to ${createdSnapshot.plant}`,
+      changes: diffChanges({}, createdSnapshot, MEMBER_AUDIT_FIELDS.filter((f) => f.key !== 'password' && f.key !== 'status')),
+      metadata: { role },
+    });
+
+    emitWorkforceUpdate({ type: 'created' });
     res.status(201).json({
       success: true,
       message: `${role === 'worker' ? 'Worker' : 'Incharge'} created`,
-      data: formatWorker(populated),
+      // Shown once to whoever created the account, never again.
+      data: {
+        ...formatWorker(populated),
+        temporaryPassword: password ? null : temp.plain,
+        temporaryPasswordExpiresAt: temp.expiresAt,
+      },
     });
   } catch (error) {
     next(error);
@@ -805,6 +979,7 @@ exports.updateTeamMember = async (req, res, next) => {
     if (!member) {
       return res.status(404).json({ success: false, message: 'Employee not found' });
     }
+    const beforeSnapshot = memberSnapshot(await prisma.user.findUnique({ where: { id: member.id }, select: personSelect }));
 
     const { name, phone, email, password, department, shiftName, equipment, process: processField, incharge, isActive } =
       req.body;
@@ -877,7 +1052,8 @@ exports.updateTeamMember = async (req, res, next) => {
       if (password.length < 6) {
         return res.status(400).json({ success: false, message: 'Password must be at least 6 characters' });
       }
-      data.password = await hashPassword(password);
+      // A password typed by someone else is only ever temporary.
+      Object.assign(data, (await tempPasswordData('reset', password)).data, { tokenVersion: { increment: 1 } });
     }
 
     await prisma.user.update({ where: { id: member.id }, data });
@@ -886,6 +1062,27 @@ exports.updateTeamMember = async (req, res, next) => {
       select: personSelect,
     });
 
+    const memberChanges = diffChanges(
+      beforeSnapshot,
+      { ...memberSnapshot(populated), password: password || undefined },
+      MEMBER_AUDIT_FIELDS
+    );
+    if (memberChanges.length) {
+      const deactivated = beforeSnapshot.status === 'Active' && populated.isActive === false;
+      await recordAudit(req, {
+        action: deactivated ? 'member.deactivated' : 'member.updated',
+        entityType: 'user',
+        entityId: member.id,
+        entityLabel: personLabel(populated),
+        summary: deactivated
+          ? `Deactivated ${roleWord(member.role)} ${personLabel(populated)}`
+          : `Updated ${roleWord(member.role)} ${personLabel(populated)}: ${memberChanges.map((c) => c.label.toLowerCase()).join(', ')}`,
+        changes: memberChanges,
+        metadata: { role: member.role },
+      });
+    }
+
+    emitWorkforceUpdate({ type: 'updated' });
     res.json({ success: true, message: 'Updated', data: formatWorker(populated) });
   } catch (error) {
     next(error);
@@ -916,6 +1113,17 @@ exports.deactivateTeamMember = async (req, res, next) => {
       data: { isActive: false, pushToken: null, webPushSubscriptions: { deleteMany: {} } },
     });
 
+    await recordAudit(req, {
+      action: 'member.deactivated',
+      entityType: 'user',
+      entityId: member.id,
+      entityLabel: personLabel(member),
+      summary: `Deactivated ${roleWord(member.role)} ${personLabel(member)}`,
+      changes: [{ field: 'status', label: 'Status', from: member.isActive ? 'Active' : 'Inactive', to: 'Inactive' }],
+      metadata: { role: member.role },
+    });
+
+    emitWorkforceUpdate({ type: 'deactivated' });
     res.json({ success: true, message: `${member.role === 'worker' ? 'Worker' : 'Incharge'} deactivated` });
   } catch (error) {
     next(error);
@@ -993,13 +1201,16 @@ exports.importTeamBulk = async (req, res, next) => {
 
     const seenIds = new Set();
     let created = 0;
+    const createdIds = [];
+    // Generated temporary passwords, returned once for HR to hand out.
+    const credentials = [];
     const errors = [];
 
     for (const row of rows) {
       try {
         if (!row.employeeId) throw new Error('Employee ID is required');
         if (!row.name) throw new Error('Name is required');
-        if (!row.password || row.password.length < 6) throw new Error('Password must be at least 6 characters');
+        if (row.password && row.password.length < 6) throw new Error('Password must be at least 6 characters (or leave it blank to generate one)');
 
         const shift = getShiftByCode(row.shiftCode);
         if (!shift) throw new Error(`Invalid shift code "${row.shiftCode || ''}" — use A, B, C, D or E`);
@@ -1025,13 +1236,14 @@ exports.importTeamBulk = async (req, res, next) => {
           inchargeId = match.id;
         }
 
+        const rowTemp = await tempPasswordData('new_account', row.password || undefined);
         await prisma.user.create({
           data: {
             employeeId: normalizedId,
             name: row.name,
             phone: row.phone || '',
             email: row.email || null,
-            password: await hashPassword(row.password),
+            ...rowTemp.data,
             role: 'worker',
             departmentId: dept.id,
             inchargeId,
@@ -1043,16 +1255,41 @@ exports.importTeamBulk = async (req, res, next) => {
           },
         });
         created += 1;
+        createdIds.push(normalizedId);
+        credentials.push({
+          row: row.rowNumber,
+          employeeId: normalizedId,
+          name: row.name,
+          temporaryPassword: row.password ? null : rowTemp.plain,
+          expiresAt: rowTemp.expiresAt,
+        });
       } catch (err) {
         const message = err.code === 'P2002' ? 'Duplicate value (employee ID or email already used)' : err.message;
         errors.push({ row: row.rowNumber, employeeId: row.employeeId, message });
       }
     }
 
+    await recordAudit(req, {
+      action: 'member.bulk_imported',
+      entityType: 'plant',
+      entityId: dept.id,
+      entityLabel: `${dept.name} (${dept.code})`,
+      summary: `Imported ${created} worker(s) into ${dept.name} (${dept.code}) from Excel${errors.length ? `; ${errors.length} row(s) skipped` : ''}`,
+      metadata: {
+        fileName: req.file.originalname,
+        rows: rows.length,
+        created,
+        skipped: errors.length,
+        createdEmployeeIds: createdIds.slice(0, 1000),
+        skippedRows: errors.slice(0, 200),
+      },
+    });
+
+    if (created > 0) emitWorkforceUpdate({ type: 'imported', count: created });
     res.json({
       success: true,
       message: `${created} worker(s) created${errors.length ? `, ${errors.length} row(s) skipped` : ''}`,
-      data: { created, failed: errors.length, errors },
+      data: { created, failed: errors.length, errors, credentials },
     });
   } catch (error) {
     next(error);
@@ -1072,21 +1309,15 @@ exports.getHrAdmins = async (req, res, next) => {
   }
 };
 
+// An admin creates a Staff or Admin login. No password is set here: the person
+// receives an invitation email and sets their own (see staff-invite.service),
+// so nobody else ever knows it.
 exports.createHrAdmin = async (req, res, next) => {
   try {
-    const { employeeId, name, email, phone, password, role } = req.body;
+    const { employeeId, name, email, phone, role } = req.body;
 
-    if (!employeeId?.trim() || !name?.trim() || !email?.trim() || !password || !role) {
-      return res.status(400).json({
-        success: false,
-        message: 'Employee ID, name, email, password and role are required',
-      });
-    }
-    if (!HR_ROLES.includes(role)) {
-      return res.status(400).json({ success: false, message: 'Role must be hr, admin or superadmin' });
-    }
-    if (password.length < 6) {
-      return res.status(400).json({ success: false, message: 'Password must be at least 6 characters' });
+    if (!ASSIGNABLE_STAFF_ROLES.includes(role)) {
+      return res.status(400).json({ success: false, message: 'Role must be Staff or Admin' });
     }
 
     const normalizedId = employeeId.trim().toUpperCase();
@@ -1104,12 +1335,74 @@ exports.createHrAdmin = async (req, res, next) => {
         name: name.trim(),
         email: normalizedEmail,
         phone: phone?.trim() || '',
-        password: await hashPassword(password),
+        // A random password nobody knows — sign-in is impossible until the
+        // invited person sets their own.
+        password: await hashPassword(crypto.randomBytes(32).toString('hex')),
         role,
+        mustSetPassword: true,
+        invitedAt: new Date(),
       },
     });
 
-    res.status(201).json({ success: true, message: 'HR login created', data: formatHrUser(admin) });
+    const emailSent = await emailStaffInvite(req, admin);
+
+    await recordAudit(req, {
+      action: 'account.staff_created',
+      entityType: 'user',
+      entityId: admin.id,
+      entityLabel: personLabel(admin),
+      summary: `Created ${roleName(role)} login for ${personLabel(admin)} and ${emailSent ? 'emailed' : 'could not email'} an invitation to ${normalizedEmail}`,
+      metadata: { role, invitationEmailed: emailSent },
+    });
+
+    emitStaffUpdate({ userId: admin.id, type: 'invited' });
+    res.status(201).json({
+      success: true,
+      message: emailSent
+        ? `Invitation sent to ${normalizedEmail}`
+        : 'Login created, but the invitation email could not be sent. Use “Resend invitation”.',
+      data: { ...formatHrUser(admin), invitationEmailed: emailSent },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Sends a fresh invitation link (e.g. the first email was lost or expired).
+// Bumping tokenVersion cancels every earlier link.
+exports.resendStaffInvite = async (req, res, next) => {
+  try {
+    const target = await prisma.user.findFirst({ where: { id: req.params.id, role: { in: HR_ROLES } } });
+    if (!target) return res.status(404).json({ success: false, message: 'Login not found' });
+    if (!target.mustSetPassword) {
+      return res.status(400).json({ success: false, message: 'This person has already set their password.' });
+    }
+    if (!target.isActive) {
+      return res.status(400).json({ success: false, message: 'Reactivate this login before sending an invitation.' });
+    }
+
+    const refreshed = await prisma.user.update({
+      where: { id: target.id },
+      data: { tokenVersion: { increment: 1 }, invitedAt: new Date() },
+    });
+    const emailSent = await emailStaffInvite(req, refreshed);
+
+    await recordAudit(req, {
+      action: 'account.invite_resent',
+      entityType: 'user',
+      entityId: target.id,
+      entityLabel: personLabel(target),
+      summary: emailSent
+        ? `Resent the invitation to ${personLabel(target)} at ${target.email} (earlier links no longer work)`
+        : `Tried to resend the invitation to ${personLabel(target)}, but the email could not be sent`,
+      metadata: { invitationEmailed: emailSent },
+    });
+
+    if (!emailSent) {
+      return res.status(502).json({ success: false, message: 'The invitation email could not be sent. Check the email settings and try again.' });
+    }
+    emitStaffUpdate({ userId: target.id, type: 'invite_resent' });
+    res.json({ success: true, message: `New invitation sent to ${target.email}` });
   } catch (error) {
     next(error);
   }
@@ -1157,7 +1450,31 @@ exports.updateHrAdmin = async (req, res, next) => {
     }
 
     const updated = await prisma.user.update({ where: { id: admin.id }, data, select: hrUserSelect });
-    res.json({ success: true, message: 'HR login updated', data: formatHrUser(updated) });
+    const staffChanges = diffChanges(
+      { name: admin.name, phone: admin.phone || '', status: admin.isActive ? 'Active' : 'Inactive' },
+      { name: updated.name, phone: updated.phone || '', status: updated.isActive ? 'Active' : 'Inactive' },
+      [
+        { key: 'name', label: 'Name' },
+        { key: 'phone', label: 'Phone' },
+        { key: 'status', label: 'Status' },
+      ]
+    );
+    if (staffChanges.length) {
+      const deactivated = admin.isActive && !updated.isActive;
+      await recordAudit(req, {
+        action: deactivated ? 'account.staff_deactivated' : 'account.staff_updated',
+        entityType: 'user',
+        entityId: admin.id,
+        entityLabel: personLabel(updated),
+        summary: deactivated
+          ? `Deactivated ${roleName(updated.role)} login ${personLabel(updated)}`
+          : `Updated ${roleName(updated.role)} login ${personLabel(updated)}: ${staffChanges.map((c) => c.label.toLowerCase()).join(', ')}`,
+        changes: staffChanges,
+        metadata: { role: updated.role },
+      });
+    }
+    emitStaffUpdate({ userId: admin.id, type: 'updated' });
+    res.json({ success: true, message: 'Login updated', data: formatHrUser(updated) });
   } catch (error) {
     next(error);
   }
@@ -1189,7 +1506,18 @@ exports.deactivateHrAdmin = async (req, res, next) => {
 
     await prisma.user.update({ where: { id: admin.id }, data: { isActive: false } });
 
-    res.json({ success: true, message: 'HR login deactivated' });
+    await recordAudit(req, {
+      action: 'account.staff_deactivated',
+      entityType: 'user',
+      entityId: admin.id,
+      entityLabel: personLabel(admin),
+      summary: `Deactivated ${roleName(admin.role)} login ${personLabel(admin)}`,
+      changes: [{ field: 'status', label: 'Status', from: admin.isActive ? 'Active' : 'Inactive', to: 'Inactive' }],
+      metadata: { role: admin.role },
+    });
+
+    emitStaffUpdate({ userId: admin.id, type: 'deactivated' });
+    res.json({ success: true, message: 'Login deactivated' });
   } catch (error) {
     next(error);
   }
@@ -1202,6 +1530,14 @@ exports.exportPollExcel = async (req, res, next) => {
     const summary = await getPollSummary(poll, poll.departmentId);
     const buffer = await buildPollExcelBuffer(poll, summary);
     const filename = `FlexiTrack_HR_${(poll.department?.code || 'DEPT')}_${String(poll.id).slice(-6)}.xlsx`;
+    await recordAudit(req, {
+      action: 'export.downloaded',
+      entityType: 'poll',
+      entityId: poll.id,
+      entityLabel: pollLabel(poll),
+      summary: `Downloaded the poll report (Excel) for ${pollLabel(poll)}`,
+      metadata: { report: 'poll_report', format: 'xlsx', fileName: filename, rows: summary.totalWorkers },
+    });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(Buffer.from(buffer));
@@ -1217,6 +1553,14 @@ exports.exportPollPdf = async (req, res, next) => {
     const summary = await getPollSummary(poll, poll.departmentId);
     const buffer = await buildPollPdfBuffer(poll, summary);
     const filename = `FlexiTrack_HR_${(poll.department?.code || 'DEPT')}_${String(poll.id).slice(-6)}.pdf`;
+    await recordAudit(req, {
+      action: 'export.downloaded',
+      entityType: 'poll',
+      entityId: poll.id,
+      entityLabel: pollLabel(poll),
+      summary: `Downloaded the poll report (PDF) for ${pollLabel(poll)}`,
+      metadata: { report: 'poll_report', format: 'pdf', fileName: filename, rows: summary.totalWorkers },
+    });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(buffer);
@@ -1269,6 +1613,13 @@ exports.exportManpowerExcel = async (req, res, next) => {
       };
     });
     const buffer = await buildRangeExcelBuffer(rows);
+    await recordAudit(req, {
+      action: 'export.downloaded',
+      entityType: 'report',
+      entityLabel: 'Manpower plan',
+      summary: `Downloaded the manpower plan (Excel)${fromDate || toDate ? ` for ${fromDate || '…'} to ${toDate || '…'}` : ''}`,
+      metadata: { report: 'manpower_plan', format: 'xlsx', status: where.status, fromDate: fromDate || null, toDate: toDate || null, rows: rows.length },
+    });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', 'attachment; filename="FlexiTrack_HR_Manpower_Plan.xlsx"');
     res.send(Buffer.from(buffer));
@@ -1312,6 +1663,14 @@ exports.exportDailyShiftsExcel = async (req, res, next) => {
     );
 
     const buffer = await buildDailyShiftsWorkbook(shiftEntries);
+    await recordAudit(req, {
+      action: 'export.downloaded',
+      entityType: 'plant',
+      entityId: dept.id,
+      entityLabel: `${dept.name} (${dept.code})`,
+      summary: `Downloaded the daily shifts workbook for ${dept.name} (${dept.code}), ${date}`,
+      metadata: { report: 'daily_shifts', format: 'xlsx', date },
+    });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="FlexiTrack_HR_DailyShifts_${date}.xlsx"`);
     res.send(Buffer.from(buffer));
@@ -1356,6 +1715,8 @@ exports.getEmployee = async (req, res, next) => {
       }),
     ]);
 
+    const passwordHistory = await passwordHistoryFor(worker.id);
+
     let directReports = null;
     if (worker.role === 'incharge') {
       const reports = await prisma.user.findMany({
@@ -1380,6 +1741,7 @@ exports.getEmployee = async (req, res, next) => {
       data: {
         employee: formatWorker(worker),
         directReports,
+        passwordHistory,
         history: responses.map((r) => ({
           id: r.id,
           answer: r.answer,
@@ -1466,6 +1828,11 @@ exports.updateFollowUp = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Worker not found in this poll\'s department' });
     }
 
+    const previousFollowUp = await prisma.followUp.findUnique({
+      where: { workerId_pollId: { workerId, pollId } },
+      select: { status: true, note: true },
+    });
+
     const record = await prisma.followUp.upsert({
       where: { workerId_pollId: { workerId, pollId } },
       create: { workerId, pollId, status, note: note || '', updatedById: req.user.id },
@@ -1487,6 +1854,26 @@ exports.updateFollowUp = async (req, res, next) => {
     }
 
     emitFollowUpUpdate({ pollId, workerId });
+
+    const followUpLabel = (s) =>
+      ({ pending: 'Pending', contacted: 'Contacted', confirmed_coming: 'Confirmed coming', confirmed_not_coming: 'Confirmed not coming' })[s] || null;
+    const followUpPoll = await prisma.poll.findUnique({ where: { id: pollId }, include: { department: true } });
+    await recordAudit(req, {
+      action: 'follow_up.updated',
+      entityType: 'poll',
+      entityId: pollId,
+      entityLabel: followUpPoll ? pollLabel(followUpPoll) : null,
+      summary: `Follow-up for ${personLabel(worker)}: ${followUpLabel(status).toLowerCase()}`,
+      changes: diffChanges(
+        { status: followUpLabel(previousFollowUp?.status) ?? 'None', note: previousFollowUp?.note || '' },
+        { status: followUpLabel(status), note: note || '' },
+        [
+          { key: 'status', label: 'Status' },
+          { key: 'note', label: 'Note' },
+        ]
+      ),
+      metadata: { workerId, workerEmployeeId: worker.employeeId },
+    });
 
     res.json({ success: true, message: 'Follow-up updated', data: record });
   } catch (error) {
@@ -1528,6 +1915,23 @@ exports.sendWorkerNotification = async (req, res, next) => {
       ttlSeconds: 12 * 60 * 60,
     });
 
+    await recordAudit(req, {
+      action: 'notification.sent',
+      entityType: target === 'worker' ? 'user' : target === 'plant' ? 'plant' : 'workers',
+      entityId: target === 'worker' ? where.id : target === 'plant' ? departmentId : null,
+      entityLabel: targetLabel,
+      summary: `Sent "${title}" to ${targetLabel}`,
+      metadata: {
+        target,
+        title,
+        message,
+        workers: result.teamSize,
+        reachable: result.targeted,
+        devicesSent: result.sent,
+        devicesFailed: result.failed,
+      },
+    });
+
     logger.info('push.hr_message_sent', {
       target,
       teamSize: result.teamSize,
@@ -1552,6 +1956,256 @@ exports.sendWorkerNotification = async (req, res, next) => {
   }
 };
 
+// ---------------------------------------------------------------------------
+// Admin-only: permanent deletes and bulk actions
+// ---------------------------------------------------------------------------
+
+// Permanently removes a Staff/Admin login. For people who should never have
+// had access (wrong person invited, test account); someone who simply left
+// is usually better deactivated, which keeps their name on past actions.
+// Their earlier actions stay in the audit log either way.
+exports.deleteHrAdmin = async (req, res, next) => {
+  try {
+    const target = await prisma.user.findFirst({ where: { id: req.params.id, role: { in: HR_ROLES } } });
+    if (!target) return res.status(404).json({ success: false, message: 'Login not found' });
+    if (target.id === req.user.id) {
+      return res.status(400).json({ success: false, message: 'You cannot delete your own login' });
+    }
+    if (['admin', 'superadmin'].includes(target.role) && target.isActive) {
+      const otherAdmins = await prisma.user.count({
+        where: { id: { not: target.id }, role: { in: ['admin', 'superadmin'] }, isActive: true, mustSetPassword: false },
+      });
+      if (otherAdmins === 0) {
+        return res.status(400).json({ success: false, message: 'Cannot delete the last active admin' });
+      }
+    }
+
+    await prisma.user.delete({ where: { id: target.id } });
+
+    await recordAudit(req, {
+      action: 'account.staff_deleted',
+      entityType: 'user',
+      entityId: target.id,
+      entityLabel: personLabel(target),
+      summary: `Permanently deleted the ${roleName(target.role)} login of ${personLabel(target)} (${target.email})`,
+      metadata: { role: target.role, email: target.email, wasActive: target.isActive, invitePending: target.mustSetPassword },
+    });
+    emitStaffUpdate({ userId: target.id, type: 'deleted' });
+
+    res.json({ success: true, message: `${target.name}'s login was deleted` });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const BULK_VERBS = {
+  deactivate: 'deactivated',
+  reactivate: 'reactivated',
+  delete: 'deleted',
+  require_password_change: 'asked for a new password',
+};
+
+// Deactivate / reactivate / permanently delete selected workers and
+// incharges. Each person is handled on their own and reported back as done
+// or skipped (with the reason), so one problem never blocks the rest.
+// Workers go first, so an incharge whose remaining active workers are all in
+// the same selection can be deactivated/deleted in the same go.
+exports.bulkTeamAction = async (req, res, next) => {
+  try {
+    const { action } = req.body;
+    const ids = [...new Set(req.body.ids)];
+    const people = await prisma.user.findMany({
+      where: { id: { in: ids }, role: { in: ['worker', 'incharge'] } },
+      select: personSelect,
+    });
+    const found = new Set(people.map((p) => p.id));
+    const done = [];
+    const skipped = ids.filter((id) => !found.has(id)).map((id) => ({ id, name: null, reason: 'Not found (already deleted?)' }));
+    const ordered = [...people].sort((a, b) => (a.role === b.role ? 0 : a.role === 'worker' ? -1 : 1));
+
+    for (const person of ordered) {
+      const who = { id: person.id, name: person.name, employeeId: person.employeeId, role: person.role };
+      try {
+        if (action === 'require_password_change') {
+          if (!person.isActive) {
+            skipped.push({ ...who, reason: 'Inactive' });
+            continue;
+          }
+          if (person.mustChangePassword) {
+            skipped.push({ ...who, reason: 'Already has to set a new password' });
+            continue;
+          }
+          await prisma.user.update({ where: { id: person.id }, data: { mustChangePassword: true, tempPasswordExpiresAt: null } });
+        } else if (action === 'reactivate') {
+          if (person.isActive) {
+            skipped.push({ ...who, reason: 'Already active' });
+            continue;
+          }
+          if (person.department && person.department.isActive === false) {
+            skipped.push({ ...who, reason: `Plant ${person.department.code} is deactivated` });
+            continue;
+          }
+          await prisma.user.update({ where: { id: person.id }, data: { isActive: true } });
+        } else {
+          if (action === 'deactivate' && !person.isActive) {
+            skipped.push({ ...who, reason: 'Already inactive' });
+            continue;
+          }
+          if (person.role === 'incharge') {
+            const activeReports = await prisma.user.count({ where: { inchargeId: person.id, role: 'worker', isActive: true } });
+            if (activeReports > 0) {
+              skipped.push({ ...who, reason: `${activeReports} active worker(s) still report to them — reassign them, or select them too` });
+              continue;
+            }
+          }
+          if (action === 'deactivate') {
+            await prisma.user.update({
+              where: { id: person.id },
+              data: { isActive: false, pushToken: null, webPushSubscriptions: { deleteMany: {} } },
+            });
+          } else {
+            // Their poll answers and follow-ups go with them (they can't
+            // exist without the person); polls they created and follow-ups
+            // they updated just lose the link (onDelete: SetNull).
+            await prisma.$transaction([
+              prisma.followUp.deleteMany({ where: { workerId: person.id } }),
+              prisma.response.deleteMany({ where: { userId: person.id } }),
+              prisma.user.delete({ where: { id: person.id } }),
+            ]);
+          }
+        }
+
+        const snapshot = memberSnapshot(person);
+        await recordAudit(req, {
+          action:
+            action === 'delete'
+              ? 'member.deleted'
+              : action === 'reactivate'
+                ? 'member.reactivated'
+                : action === 'require_password_change'
+                  ? 'member.password_change_required'
+                  : 'member.deactivated',
+          entityType: 'user',
+          entityId: person.id,
+          entityLabel: personLabel(person),
+          summary:
+            action === 'delete'
+              ? `Permanently deleted ${roleWord(person.role)} ${personLabel(person)} (${snapshot.plant}) and their attendance answers`
+              : action === 'require_password_change'
+                ? `Required ${roleWord(person.role)} ${personLabel(person)} to set a new password at next sign-in`
+                : `${action === 'reactivate' ? 'Reactivated' : 'Deactivated'} ${roleWord(person.role)} ${personLabel(person)}`,
+          changes:
+            action === 'delete'
+              ? diffChanges(snapshot, {}, MEMBER_AUDIT_FIELDS.filter((f) => f.key !== 'password'))
+              : action === 'require_password_change'
+                ? []
+                : [{ field: 'status', label: 'Status', from: action === 'reactivate' ? 'Inactive' : 'Active', to: action === 'reactivate' ? 'Active' : 'Inactive' }],
+          metadata: { role: person.role, bulk: ids.length > 1 },
+        });
+        done.push(who);
+      } catch (error) {
+        logger.error('team.bulk_item_failed', { action, userId: person.id, error: error.message });
+        skipped.push({ ...who, reason: 'Could not be updated — try again' });
+      }
+    }
+
+    if (done.length) emitWorkforceUpdate({ type: BULK_VERBS[action], count: done.length });
+
+    const verb = BULK_VERBS[action];
+    res.json({
+      success: true,
+      message: `${done.length} ${done.length === 1 ? 'person' : 'people'} ${verb}${skipped.length ? `, ${skipped.length} skipped` : ''}`,
+      data: { action, done, skipped },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// HR/admin: give a worker or incharge a new temporary password (they forgot
+// theirs). Valid 24 hours; signs them out everywhere; they must set their own
+// at the next sign-in. Shown once in the response, never stored readable.
+exports.resetTeamMemberPassword = async (req, res, next) => {
+  try {
+    const member = await prisma.user.findFirst({
+      where: { id: req.params.id, role: { in: ['worker', 'incharge', 'supervisor'] } },
+      select: personSelect,
+    });
+    if (!member) return res.status(404).json({ success: false, message: 'Employee not found' });
+    if (!member.isActive) {
+      return res.status(400).json({ success: false, message: 'Reactivate this person before resetting their password.' });
+    }
+
+    const temp = await tempPasswordData('reset');
+    await prisma.user.update({
+      where: { id: member.id },
+      data: { ...temp.data, tokenVersion: { increment: 1 } },
+    });
+
+    await recordAudit(req, {
+      action: 'member.password_reset',
+      entityType: 'user',
+      entityId: member.id,
+      entityLabel: personLabel(member),
+      summary: `Issued a temporary password to ${roleWord(member.role)} ${personLabel(member)} (valid 24 hours; signed out everywhere)`,
+      changes: [{ field: 'password', label: 'Password', from: null, to: null, note: 'changed' }],
+      metadata: { role: member.role, expiresAt: temp.expiresAt },
+    });
+    emitWorkforceUpdate({ type: 'password_reset' });
+
+    res.json({
+      success: true,
+      message: `Temporary password created for ${member.name}`,
+      data: { temporaryPassword: temp.plain, expiresAt: temp.expiresAt, name: member.name, employeeId: member.employeeId },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Admin: everyone in a plant (or everywhere) must set a new password at their
+// next sign-in — e.g. to get rid of a shared default password. Their current
+// password keeps working only to sign in and set the new one.
+exports.requirePasswordChange = async (req, res, next) => {
+  try {
+    const { scope, departmentId } = req.body;
+    const where = { role: { in: ['worker', 'incharge', 'supervisor'] }, isActive: true, mustChangePassword: false };
+    let scopeLabel = 'everyone';
+    if (scope === 'plant') {
+      if (!departmentId) return res.status(400).json({ success: false, message: 'Choose a plant' });
+      const dept = await prisma.department.findUnique({ where: { id: departmentId }, select: { name: true, code: true } });
+      if (!dept) return res.status(404).json({ success: false, message: 'Plant not found' });
+      where.departmentId = departmentId;
+      scopeLabel = `everyone in ${dept.name} (${dept.code})`;
+    }
+
+    const { count } = await prisma.user.updateMany({
+      where,
+      data: { mustChangePassword: true, tempPasswordExpiresAt: null },
+    });
+
+    await recordAudit(req, {
+      action: 'member.password_change_required',
+      entityType: scope === 'plant' ? 'plant' : 'workers',
+      entityId: scope === 'plant' ? departmentId : null,
+      entityLabel: scopeLabel,
+      summary: `Required a new password at next sign-in for ${scopeLabel} (${count} account${count === 1 ? '' : 's'})`,
+      metadata: { scope, count },
+    });
+    if (count) emitWorkforceUpdate({ type: 'password_change_required', count });
+
+    res.json({
+      success: true,
+      message: count
+        ? `${count} ${count === 1 ? 'person' : 'people'} will be asked for a new password at their next sign-in`
+        : 'Everyone in this group already has to set a new password',
+      data: { count },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 exports.changePassword = async (req, res, next) => {
   try {
     const { currentPassword, newPassword } = req.body;
@@ -1569,6 +2223,14 @@ exports.changePassword = async (req, res, next) => {
     }
 
     await prisma.user.update({ where: { id: user.id }, data: { password: await hashPassword(newPassword) } });
+    await recordAudit(req, {
+      action: 'auth.password_changed',
+      entityType: 'user',
+      entityId: user.id,
+      entityLabel: personLabel(user),
+      summary: `${user.name} changed their password`,
+      changes: [{ field: 'password', label: 'Password', from: null, to: null, note: 'changed' }],
+    });
     res.json({ success: true, message: 'Password updated' });
   } catch (error) {
     next(error);

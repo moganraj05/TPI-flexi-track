@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { theme, SUCCESS } from '../../theme';
+import { PasswordInput } from '../common/PasswordInput';
 
 // Mirrors the backend's strongPassword() rule in validation/schemas.js —
 // the server is the one that enforces it; this is only live feedback.
@@ -48,9 +49,10 @@ export function PasswordStep({ submitLabel, onSubmit }) {
       <label style={theme.label} htmlFor="new-password">
         Password
       </label>
-      <input
+      <PasswordInput
         id="new-password"
-        type={show ? 'text' : 'password'}
+        visible={show}
+        onToggle={() => setShow((v) => !v)}
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         autoComplete="new-password"
@@ -63,9 +65,10 @@ export function PasswordStep({ submitLabel, onSubmit }) {
       <label style={theme.label} htmlFor="confirm-password">
         Confirm password
       </label>
-      <input
+      <PasswordInput
         id="confirm-password"
-        type={show ? 'text' : 'password'}
+        visible={show}
+        onToggle={() => setShow((v) => !v)}
         value={confirmPassword}
         onChange={(e) => setConfirmPassword(e.target.value)}
         autoComplete="new-password"
@@ -74,10 +77,6 @@ export function PasswordStep({ submitLabel, onSubmit }) {
         className="ft-login-input"
       />
 
-      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: theme.textSecondary, marginTop: 10, cursor: 'pointer' }}>
-        <input type="checkbox" checked={show} onChange={(e) => setShow(e.target.checked)} />
-        Show passwords
-      </label>
 
       <ul style={{ listStyle: 'none', padding: 0, margin: '12px 0 0', fontSize: 12.5 }}>
         {RULES.map((rule) => {

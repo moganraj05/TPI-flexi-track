@@ -24,7 +24,7 @@ export function InchargePollDetail() {
   const query = useInchargePoll(id);
   const goBack = () => navigate('/incharge', { replace: true });
 
-  if (query.isLoading) {
+  if (query.isPending) {
     return (
       <div className="m-screen m-screen-plain">
         <Loading />

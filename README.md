@@ -26,10 +26,11 @@ flexitrack/
 | Address | Who | What |
 |---|---|---|
 | `/login` | Workers, incharges, supervisors | Sign in with Employee ID + password |
+| `/forgot` | Workers, incharges, supervisors | Forgot password: ask their incharge for a temporary password |
 | `/home`, `/history`, `/profile` | Workers | Answer the shift poll, see past answers, settings |
-| `/incharge`, `/incharge/team`, `/incharge/poll/:id`, `/incharge/profile` | Incharges / supervisors | Polls dashboard, team management, poll report |
+| `/incharge`, `/incharge/team`, `/incharge/requests`, `/incharge/poll/:id`, `/incharge/profile` | Incharges / supervisors | Polls dashboard, team management, password reset requests, poll report |
 | `/staff/login` | HR / admin | Sign in to the ops console |
-| `/staff/app/...` | HR / admin | Dashboard, live board, attendance, workforce, reports, settings |
+| `/staff/app/...` | HR / admin | Dashboard, live board, attendance, workforce, password requests, reports, settings |
 
 `/` sends everyone to their own home after sign-in. Old HR links (`/app/...`,
 `/register`, `/forgot-password`) redirect to the same page under `/staff`.
@@ -93,6 +94,139 @@ Notifications), and to the Android APK as before.
 
 Profile → Notifications has a **Send a test notification** button to check a
 phone end to end.
+
+## Staying signed in
+
+Both apps keep you signed in until you press **Log out** on that device —
+closing the browser, restarting the phone, no internet or the server
+sleeping/restarting never signs anyone out (the app retries in the
+background). Tokens last `JWT_EXPIRES_IN` (365 days) and are renewed
+automatically while the app is used.
+
+- **Log out** ends only that device's session (`revoked_sessions` table);
+  the same person stays signed in on their other devices.
+- **Signing out everywhere** happens when the password is changed or reset
+  (`users.token_version`), or the account is deactivated.
+
+## Offline use
+
+Both apps (worker / incharge at `/`, staff console at `/staff`) keep working
+without internet once they have been opened online once on that device:
+
+- **Every page opens offline.** The service worker (`webfrontend/public/sw.js`)
+  downloads every file of the build at install — the build writes the file
+  list and a cache version into `dist/sw.js` (`vite.config.js`). Fonts are
+  bundled with the site (`@fontsource/*`), no Google Fonts.
+- **Last data stays visible.** Loaded data is saved in IndexedDB on the device
+  (`src/offline/persist.js`, kept 3 days) and shown offline with a banner;
+  on reconnect every screen refreshes by itself. Signing out deletes that
+  app's saved data. A page never opened before says "You're offline".
+- **Poll answers offline.** A worker can answer the poll with no connection:
+  it is saved on the phone ("Waiting to send"), survives closing the app, and
+  is sent automatically when the phone is back online
+  (`src/mobile/offline/`). If the poll closed meanwhile, the server refuses it
+  and the worker is told.
+- **Other changes are blocked offline** (staff console actions, incharge
+  actions) with "You're offline — this change wasn't saved", instead of being
+  queued and applied later out of order.
+- **Staying signed in.** No connection never signs anyone out; only the
+  server rejecting the session does.
+
+Offline caching is off on the Vite dev server (`npm run dev`); test it with
+`npm run build && npx vite preview` or the deployed site. No Redis or other
+server-side component is involved.
+
+## Staff console logins
+
+Console logins have two tags: **Admin** and **Staff** (stored roles
+`superadmin`/`admin` and `hr` are unchanged). Admin-only: Notifications,
+Audit log, and managing logins in Settings.
+
+An admin adds a login in **Settings → Staff & admin logins** with name,
+employee ID, email and role — no password. The person gets an email with a
+**Set my password** link (works once, valid 72 hours; "Resend invitation"
+sends a new one and cancels the old) and signs in after setting it. Set
+`PUBLIC_APP_URL` on the backend to the website address so the link points
+to the right place.
+
+## Worker & incharge passwords
+
+No shared default password: every new worker/incharge account (HR → Workforce,
+the incharge app, or Excel import) gets its own random temporary password
+like `K7MQ-42XA`, shown once to whoever created it (Excel import: a
+downloadable list of the new logins). It works for 7 days.
+
+The first sign-in with a temporary password opens **Set your password**;
+the server refuses every other request until it's done. Rules: 8+
+characters with a letter and a number, not the Employee ID / phone number /
+a common password, not the same as before. Setting it signs out every other
+session.
+
+- Forgot password (self-service): **Forgot password?** on the sign-in page
+  (`/forgot`). The person enters their Employee ID + the last 4 digits of
+  the phone number on file and always sees the same "request sent" answer
+  (it never reveals whether the account exists). The request goes to their
+  incharge — or, for incharges, supervisors and workers without an active
+  incharge, to the plant's supervisors — as a push notification and a badge
+  on the **Requests** tab. The incharge calls them, ticks "I confirmed it's
+  really them", then **Reset password** (a 24-hour temporary password, shown
+  once) or **Reject** with a reason. Status: waiting → temporary password
+  issued → completed (they set their own password); also rejected, expired
+  (after 48 hours) or cancelled (they signed in normally). One open request
+  per person (asking again refreshes it), at most 3 a day; the endpoint is
+  rate limited by `RATE_LIMIT_FORGOT_MAX` (default 30 per 15 min per IP).
+  Every request, approval and rejection is in the audit log.
+- Moving up: a request nobody acts on within 12 hours
+  (`RESET_REQUEST_ESCALATE_HOURS`) moves from the incharge to the plant's
+  supervisors, then to HR; the new handlers get a push notification and the
+  incharge still sees it, marked overdue. A supervisor's own request, or one
+  from a plant with no active supervisor, goes straight to HR. A background
+  job checks every 5 minutes (`RESET_REQUEST_CHECK_INTERVAL_MS`) and also
+  expires requests after 48 hours; both are recorded in the audit log as
+  "FlexiTrack (automatic)".
+- Staff console **Password requests** (Staff and Admin): every plant, with
+  *Waiting for HR* / *All open* / *Done* tabs, plant filter and search; a
+  red sidebar badge counts the ones waiting for HR (live). Staff and Admins
+  can handle any request the same way (call, confirm, reset or reject).
+- **Password history** on each worker's / incharge's page in Workforce:
+  current state (own password / must set a new one / temporary password
+  expired), when they last set their own password, last sign-in, reset
+  requests in the last 30 days, any open request, and every password event
+  from the audit log (never the password itself).
+- HR or an admin can also reset directly: **Workforce → Edit → Reset
+  password** — a new temporary password valid for 24 hours, and the person is
+  signed out everywhere.
+- Existing accounts still on a shared password: admins use **Settings →
+  Worker & incharge passwords** (a plant or everyone) or select people in
+  Workforce → **Require new password**.
+- Incharges can't type or change a worker's password.
+- Workers/incharges can change their own password in **Profile**.
+
+## Audit log
+
+Every action that changes data or takes it out of the system is recorded:
+staff sign-ins (including failed ones, with the reason), password changes and
+resets, HR/admin login and registration changes, workers/incharges added,
+edited, imported or deactivated (from the HR console or the incharge app),
+plants, attendance marked on a worker's behalf, follow-ups, polls closed
+early, notifications sent, and every report/export downloaded.
+
+Each entry stores who (name, role, login), what (a plain sentence plus
+before → after for each changed field), which record, when, and from where
+(IP address, device, request ID). Passwords are only ever recorded as
+"changed". Admins see it in the staff console under **Audit log** (search,
+filter by category and date, download CSV); Staff logins don't.
+
+Entries are permanent. The `audit_logs` table has a database trigger that
+rejects UPDATE, and rejects DELETE/TRUNCATE unless a retention purge is done
+deliberately in one transaction:
+
+```sql
+BEGIN;
+SET LOCAL flexitrack.allow_audit_delete = 'on';
+DELETE FROM audit_logs WHERE created_at < now() - interval '3 years';
+COMMIT;
+```
 
 ## Deploy: Render (backend) + Vercel (website)
 

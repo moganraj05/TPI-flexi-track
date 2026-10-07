@@ -43,6 +43,23 @@ enum ApprovalStatus {
   approved
 }
 
+// Worker-app "Forgot password?" requests (see password-reset.service.js).
+enum ResetRequestStatus {
+  pending   // waiting for the incharge / supervisor
+  approved  // a temporary password was issued
+  rejected  // the handler decided it wasn't genuine
+  expired   // nobody acted in time
+  cancelled // the person signed in normally before anyone acted
+}
+
+// Who a pending reset request is currently with. It moves up when nobody
+// acts in time (password-reset.service.js escalation job).
+enum ResetRequestLevel {
+  incharge   // the worker's own incharge
+  supervisor // the plant's supervisors
+  staff      // HR / admin in the staff console
+}
+
 enum OtpPurpose {
   register
   reset_password
@@ -87,6 +104,22 @@ model User {
   emailVerifiedAt DateTime? @map("email_verified_at")
   approvedAt   DateTime? @map("approved_at")
   approvedById String?  @map("approved_by") @db.Uuid
+  // Staff/admin logins created by an admin start with no usable password:
+  // the person sets their own from the invitation email (staff-invite.service).
+  mustSetPassword Boolean  @default(false) @map("must_set_password")
+  invitedAt       DateTime? @map("invited_at")
+  // Worker app (workers / incharges / supervisors): set when the account was
+  // given a temporary password (new account, reset) or an admin required a
+  // change. Until the person sets their own, the server allows only
+  // "change my password" (middleware/auth.js).
+  mustChangePassword    Boolean   @default(false) @map("must_change_password")
+  // When the current temporary password stops working; null = the current
+  // password doesn't expire (e.g. "required a change" on an existing one).
+  tempPasswordExpiresAt DateTime? @map("temp_password_expires_at")
+  // Last successful worker-app sign-in (shown on password reset requests).
+  lastLoginAt           DateTime? @map("last_login_at")
+  // When the person last chose their own worker-app password.
+  passwordChangedAt     DateTime? @map("password_changed_at")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
@@ -95,8 +128,52 @@ model User {
   followUpsAsWorker FollowUp[] @relation("FollowUpWorker")
   followUpsUpdated  FollowUp[] @relation("FollowUpUpdatedBy")
   webPushSubscriptions WebPushSubscription[]
+  passwordResetRequests PasswordResetRequest[]
 
   @@map("users")
+}
+
+// Append-only record of every action that changes data or exposes it (who,
+// what, which record, before -> after, when, from where). Written by
+// src/services/audit.service.js; read by admins in the HR console.
+//
+// Deliberately no foreign keys: an entry must outlive the account or record
+// it mentions, so the actor and target are stored as snapshots (name, role,
+// employee ID / email at the time) alongside their IDs. A database trigger
+// (see this table's migration) rejects UPDATE always, and DELETE unless the
+// retention switch `flexitrack.allow_audit_delete` is set for the session —
+// history can't be quietly edited, even with direct database access.
+model AuditLog {
+  id              String   @id @default(uuid()) @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  // Who: null actorId = not signed in (failed sign-in, self-registration,
+  // forgot password) or the system itself.
+  actorId         String?  @map("actor_id") @db.Uuid
+  actorName       String?  @map("actor_name")
+  actorRole       String?  @map("actor_role")
+  actorIdentifier String?  @map("actor_identifier")
+  // What: dotted action code ("member.updated"); category = its first part.
+  action          String
+  category        String
+  // Which record.
+  entityType      String?  @map("entity_type")
+  entityId        String?  @map("entity_id")
+  entityLabel     String?  @map("entity_label")
+  // Plain-language sentence shown in the log.
+  summary         String
+  // [{ field, label, from, to }] — secrets appear only as "changed".
+  changes         Json?
+  metadata        Json?
+  // From where.
+  ipAddress       String?  @map("ip_address")
+  userAgent       String?  @map("user_agent")
+  requestId       String?  @map("request_id")
+
+  @@index([createdAt])
+  @@index([category, createdAt])
+  @@index([actorId, createdAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
 }
 
 // One row per browser/installed-web-app that opted in to notifications
@@ -221,4 +298,55 @@ model EmailOtp {
   @@index([email, purpose, createdAt])
   @@index([expiresAt])
   @@map("email_otps")
+}
+
+// A worker/incharge who forgot their password asks for help from the app's
+// login page. It goes to their incharge (or the plant's supervisors), who
+// confirms it's really them and issues a temporary password. One open request
+// per person; asking again refreshes it. Rows are kept as history.
+// Sessions ended by "Log out" on one device. Logging out revokes only that
+// sign-in (its token's session id); the person stays signed in everywhere
+// else. Rows can be deleted once the token would have expired anyway.
+// (Signing out everywhere — password change/reset — bumps users.token_version.)
+model RevokedSession {
+  key       String   @id
+  userId    String   @map("user_id") @db.Uuid
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([expiresAt])
+  @@map("revoked_sessions")
+}
+
+model PasswordResetRequest {
+  id              String             @id @default(uuid()) @db.Uuid
+  userId          String             @map("user_id") @db.Uuid
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Plant at the time, and who it was sent to (null = the plant's
+  // supervisors). Plain ids, not relations: history outlives the people.
+  departmentId    String?            @map("department_id") @db.Uuid
+  routedToId      String?            @map("routed_to_id") @db.Uuid
+  status          ResetRequestStatus @default(pending)
+  requestCount    Int                @default(1) @map("request_count")
+  createdAt       DateTime           @default(now()) @map("created_at")
+  lastRequestedAt DateTime           @default(now()) @map("last_requested_at")
+  expiresAt       DateTime           @map("expires_at")
+  notifiedAt      DateTime?          @map("notified_at")
+  requestIp       String?            @map("request_ip")
+  userAgent       String?            @map("user_agent")
+  handledById     String?            @map("handled_by_id") @db.Uuid
+  handledByName   String?            @map("handled_by_name")
+  handledAt       DateTime?          @map("handled_at")
+  rejectReason    String?            @map("reject_reason")
+  // When the person set their own password after the reset.
+  completedAt     DateTime?          @map("completed_at")
+  // Who has it now, and when it last moved up (null = never escalated).
+  level           ResetRequestLevel  @default(incharge)
+  escalatedAt     DateTime?          @map("escalated_at")
+
+  @@index([userId, status])
+  @@index([status, level])
+  @@index([departmentId, status])
+  @@index([routedToId, status])
+  @@map("password_reset_requests")
 }

@@ -1,4 +1,4 @@
-import { client } from './client';
+import { client, setToken } from './client';
 
 export const login = async (email, password) => {
   const { data } = await client.post('/hr/login', { email, password });
@@ -7,6 +7,9 @@ export const login = async (email, password) => {
 
 export const getMe = async () => {
   const { data } = await client.get('/hr/me');
+  // The server renews an old token while the console is used — keep it, so
+  // the session never runs out for someone who keeps using it.
+  if (data.token) setToken(data.token);
   return data.data;
 };
 
@@ -159,9 +162,28 @@ export const getHrAdmins = async () => {
   return data.data;
 };
 
-export const createHrAdmin = async (payload) => {
-  const { data } = await client.post('/hr/admins', payload);
-  return data.data;
+// Creates a Staff/Admin login and emails the person an invitation to set
+// their own password. Returns { message, login } — message says whether the
+// email went out.
+export const createHrAdmin = async ({ employeeId, name, email, phone, role }) => {
+  const { data } = await client.post('/hr/admins', { employeeId, name, email, phone, role });
+  return { message: data.message, login: data.data };
+};
+
+export const resendStaffInvite = async (id) => {
+  const { data } = await client.post(`/hr/admins/${id}/resend-invite`, {});
+  return data;
+};
+
+// ---- Public: the invited person sets their password from the email link ----
+export const verifyStaffInvite = async (token) => {
+  const { data } = await client.post('/hr/invite/verify', { token });
+  return data.data; // { name, email, role }
+};
+
+export const acceptStaffInvite = async ({ token, password, confirmPassword }) => {
+  const { data } = await client.post('/hr/invite/accept', { ticket: token, password, confirmPassword });
+  return data;
 };
 
 export const updateHrAdmin = async (id, updates) => {
@@ -273,4 +295,72 @@ export const downloadDailyShiftsExcel = async ({ department, date }) => {
 export const sendWorkerNotification = async ({ target, departmentId, employeeId, title, message }) => {
   const { data } = await client.post('/hr/notifications/send', { target, departmentId, employeeId, title, message });
   return { message: data.message, ...data.data };
+};
+
+// ---- Audit log (admin / superadmin only) ----
+// filters: { category, action, q, from, to, actorId, entityId } — dates YYYY-MM-DD.
+
+export const getAuditMeta = async () => {
+  const { data } = await client.get('/hr/audit-logs/meta');
+  return data.data; // { categories: [{value,label}], actions: [{value,label,category}] }
+};
+
+export const getAuditLogs = async ({ page, limit, ...filters } = {}) => {
+  const { data } = await client.get('/hr/audit-logs', { params: { page, limit, ...filters } });
+  return { items: data.data, meta: data.meta };
+};
+
+export const downloadAuditLogCsv = async (filters = {}) => {
+  const { data } = await client.get('/hr/audit-logs/export.csv', { params: filters, responseType: 'blob' });
+  downloadBlob(data, `FlexiTrack_AuditLog_${new Date().toISOString().slice(0, 10)}.csv`);
+};
+
+// ---- Admin-only destructive actions ----
+
+// Permanently deletes a Staff/Admin login.
+export const deleteHrAdmin = async (id) => {
+  const { data } = await client.delete(`/hr/admins/${id}/permanent`);
+  return data;
+};
+
+// action: 'deactivate' | 'reactivate' | 'delete' (permanent) on workers/incharges.
+// Returns { message, done: [...], skipped: [{ name, reason }] }.
+export const bulkTeamAction = async (action, ids) => {
+  const { data } = await client.post('/hr/team/bulk', { action, ids });
+  return { message: data.message, ...data.data };
+};
+
+// A new temporary password for a worker/incharge who forgot theirs (24 h).
+// Returns { temporaryPassword, expiresAt, name, employeeId } — shown once.
+export const resetTeamMemberPassword = async (id) => {
+  const { data } = await client.post(`/hr/team/${id}/reset-password`, {});
+  return data.data;
+};
+
+// Admin: everyone in a plant (scope 'plant' + departmentId) or everyone
+// (scope 'all') must set a new password at their next sign-in.
+export const requirePasswordChange = async ({ scope, departmentId }) => {
+  const { data } = await client.post('/hr/team/require-password-change', { scope, departmentId });
+  return { message: data.message, count: data.data.count };
+};
+
+// Worker-app password reset requests ("Forgot password?") from every plant.
+export const getResetRequests = async ({ view, department, q, page, limit } = {}) => {
+  const { data } = await client.get('/hr/reset-requests', { params: { view, department, q, page, limit } });
+  return { items: data.data, meta: data.meta };
+};
+
+export const getResetRequestSummary = async () => {
+  const { data } = await client.get('/hr/reset-requests/summary');
+  return data.data; // { open, hr }
+};
+
+export const approveResetRequest = async (id) => {
+  const { data } = await client.post(`/hr/reset-requests/${id}/approve`, {});
+  return data.data; // { name, employeeId, temporaryPassword, temporaryPasswordExpiresAt }
+};
+
+export const rejectResetRequest = async (id, reason) => {
+  const { data } = await client.post(`/hr/reset-requests/${id}/reject`, { reason });
+  return data;
 };

@@ -69,7 +69,8 @@ const createTeamWorkerBody = z.object({
   employeeId: requiredString('Employee ID'),
   name: requiredString('Name'),
   phone: z.string().trim().optional(),
-  password: password(),
+  // Optional: left out, a random temporary password is generated.
+  password: password().optional(),
   shiftCode: shiftCode().optional(),
   shiftStart: shiftTime().optional(),
   shiftEnd: shiftTime().optional(),
@@ -116,7 +117,8 @@ const createTeamMemberBody = z.object({
   name: requiredString('Name'),
   phone: z.string().trim().optional(),
   email: z.union([z.string().trim().email('Invalid email'), z.literal('')]).optional(),
-  password: password(),
+  // Optional: left out, a random temporary password is generated.
+  password: password().optional(),
   role: z.string(),
   department: uuid('plant ID'),
   shiftCode: shiftCode().optional(),
@@ -144,13 +146,13 @@ const updateTeamMemberBody = z.object({
   isActive: z.boolean().optional(),
 });
 
+// No password: the person sets their own from the invitation email.
 const createHrAdminBody = z.object({
   employeeId: requiredString('Employee ID'),
   name: requiredString('Name'),
   email: z.string().trim().email('Invalid email'),
   phone: z.string().trim().optional(),
-  password: password(),
-  role: z.string(),
+  role: z.enum(['hr', 'admin'], { message: 'Role must be Staff or Admin' }),
 });
 
 const updateHrAdminBody = z.object({
@@ -209,7 +211,48 @@ const passwordWithTicketBody = withPasswordConfirmation({
 
 const forgotPasswordBody = z.object({ email: emailField() });
 
-const approveHrAdminBody = z.object({ role: z.enum(['hr', 'admin', 'superadmin'], { message: 'Invalid role' }).optional() });
+const approveHrAdminBody = z.object({ role: z.enum(['hr', 'admin'], { message: 'Role must be Staff or Admin' }).optional() });
+
+// Staff invitation link: check it, then set the password with it.
+const inviteTokenBody = z.object({ token: ticketField().max(2000) });
+
+// Worker app: set your own password (current one only needed when the
+// change isn't being required; the controller checks).
+const changeOwnPasswordBody = z
+  .object({
+    currentPassword: z.string().max(200).optional(),
+    newPassword: z.string().min(1, 'Enter a new password').max(72, 'Password must be at most 72 characters'),
+    confirmPassword: z.string(),
+  })
+  .refine((b) => b.newPassword === b.confirmPassword, { message: 'Passwords do not match', path: ['confirmPassword'] });
+
+// Worker app "Forgot password?" (public).
+const forgotWorkerPasswordBody = z.object({
+  employeeId: requiredString('Employee ID').pipe(z.string().max(40, 'Employee ID is too long')),
+  phoneLast4: z.string().trim().regex(/^\d{4}$/, 'Enter the last 4 digits of your phone number'),
+});
+
+const resetRequestIdParam = z.object({ requestId: uuid('request ID') });
+const rejectResetRequestBody = z.object({
+  reason: z.string().trim().min(1, 'Give a reason').max(200, 'Reason is too long (200 characters max)'),
+});
+
+// Admin: require a new password at next sign-in for a plant or everyone.
+const requirePasswordChangeBody = z.object({
+  scope: z.enum(['plant', 'all'], { message: 'Choose a plant or everyone' }),
+  departmentId: uuid('plant').optional(),
+});
+
+// Admin bulk action on workers/incharges selected in Workforce.
+const bulkTeamBody = z.object({
+  action: z.enum(['deactivate', 'reactivate', 'delete', 'require_password_change'], { message: 'Unknown action' }),
+  ids: z.array(uuid('employee ID')).min(1, 'Select at least one person').max(500, 'Select at most 500 people at a time'),
+});
+const acceptInviteBody = withPasswordConfirmation({
+  ticket: ticketField().max(2000),
+  password: strongPassword(),
+  confirmPassword: z.string(),
+});
 
 // HR "send a notification" (demo / announcements). Target-specific fields
 // are checked in the controller, where the plant/worker lookup happens.
@@ -249,4 +292,12 @@ module.exports = {
   passwordWithTicketBody,
   forgotPasswordBody,
   approveHrAdminBody,
+  inviteTokenBody,
+  acceptInviteBody,
+  bulkTeamBody,
+  changeOwnPasswordBody,
+  requirePasswordChangeBody,
+  forgotWorkerPasswordBody,
+  resetRequestIdParam,
+  rejectResetRequestBody,
 };

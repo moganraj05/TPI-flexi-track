@@ -1,6 +1,7 @@
 import { useId, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Icon } from './Icon';
+import { useOnline } from '../../hooks/useOnline';
 import { avatarTintIndex, initials } from '../utils';
 
 // Small building blocks of the worker / incharge app, ported one-to-one from
@@ -207,7 +208,19 @@ export function StatsCard({ items }) {
   );
 }
 
+// Offline with nothing saved for this screen yet: say so instead of spinning
+// forever — it loads by itself once the connection is back.
 export function Loading({ label = 'Loading…' }) {
+  const online = useOnline();
+  if (!online) {
+    return (
+      <div className="m-card m-empty" role="status">
+        <Icon name="wifi-off" size={30} className="m-text-muted" />
+        <div className="m-empty-title">You&apos;re offline</div>
+        <p className="m-empty-text">This screen hasn&apos;t been saved on this phone yet. It loads by itself when you&apos;re back online.</p>
+      </div>
+    );
+  }
   return (
     <div className="m-loading" role="status">
       <span className="m-spinner" aria-hidden="true" />

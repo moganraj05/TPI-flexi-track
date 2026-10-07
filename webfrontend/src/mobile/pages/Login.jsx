@@ -5,15 +5,6 @@ import { Button, PasswordInput, TextField } from '../components/ui';
 import { useMobileAuth } from '../context/AuthContext';
 import { homeRouteFor } from '../utils';
 
-// Demo accounts from the seed data — shown only in development builds, never
-// on the real site.
-const DEMO_ACCOUNTS = import.meta.env.DEV
-  ? [
-      { label: 'Worker', id: 'EMP1042', password: 'password123' },
-      { label: 'Incharge', id: 'INC001', password: 'password123' },
-    ]
-  : [];
-
 export function LoginPage() {
   const { login, status, user } = useMobileAuth();
   const navigate = useNavigate();
@@ -22,12 +13,14 @@ export function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [isStaffAccount, setIsStaffAccount] = useState(false);
+  const [tempExpired, setTempExpired] = useState(false);
 
-  if (status === 'authed' && user) return <Navigate to={homeRouteFor(user.role)} replace />;
+  if (status === 'authed' && user) return <Navigate to={user.mustChangePassword ? '/set-password' : homeRouteFor(user.role)} replace />;
 
   const clearError = () => {
     setError('');
     setIsStaffAccount(false);
+    setTempExpired(false);
   };
 
   const handleSubmit = async (e) => {
@@ -40,13 +33,14 @@ export function LoginPage() {
     clearError();
     try {
       const signedIn = await login(employeeId.trim(), password);
-      navigate(homeRouteFor(signedIn.role), { replace: true });
+      navigate(signedIn.mustChangePassword ? '/set-password' : homeRouteFor(signedIn.role), { replace: true });
     } catch (err) {
       // 401 = wrong ID/password; 403 = an HR/admin account (they sign in at
       // /staff); status 0 = the server could not be reached at all.
       if (err.status === 401) setError("That ID and password don't match. Try again.");
       else setError(err.message || 'Something went wrong. Try again.');
       setIsStaffAccount(err.status === 403);
+      setTempExpired(err.data?.code === 'TEMP_PASSWORD_EXPIRED');
     } finally {
       setLoading(false);
     }
@@ -100,6 +94,9 @@ export function LoginPage() {
           autoComplete="current-password"
           error={!!error}
         />
+        <Link to="/forgot" className="m-link m-forgot-link">
+          Forgot password?
+        </Link>
 
         {error ? (
           <p className="m-form-error" role="alert">
@@ -109,6 +106,14 @@ export function LoginPage() {
                 {' '}
                 <Link to="/staff/login" className="m-link">
                   Go to staff sign in
+                </Link>
+              </>
+            ) : null}
+            {tempExpired ? (
+              <>
+                {' '}
+                <Link to="/forgot" className="m-link">
+                  Ask for a new one
                 </Link>
               </>
             ) : null}
@@ -122,26 +127,8 @@ export function LoginPage() {
       </form>
 
       <div className="m-login-footer">
-        {DEMO_ACCOUNTS.length ? (
-          <div className="m-demo-row">
-            {DEMO_ACCOUNTS.map((demo) => (
-              <button
-                key={demo.id}
-                type="button"
-                className="m-demo-chip"
-                onClick={() => {
-                  setEmployeeId(demo.id);
-                  setPassword(demo.password);
-                  clearError();
-                }}
-              >
-                <b>{demo.label}</b> <span className="m-mono">{demo.id}</span>
-              </button>
-            ))}
-          </div>
-        ) : null}
         <Link to="/staff/login" className="m-link m-staff-link">
-          HR or admin? Sign in to the staff console
+          Staff or admin? Sign in to the staff console
         </Link>
       </div>
     </div>

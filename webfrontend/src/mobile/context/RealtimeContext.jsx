@@ -58,6 +58,12 @@ export function MobileRealtimeProvider({ children }) {
         if (AUTH_ERROR_MESSAGES.has(err.message)) socket.disconnect();
       });
 
+      // A password reset request changed for this plant (new, approved,
+      // rejected, completed) — the incharge Requests tab and its badge.
+      socket.on('reset:update', () => {
+        queryClient.invalidateQueries({ queryKey: ['m', 'reset-requests'] });
+      });
+
       socket.on('poll:update', (payload) => {
         queryClient.invalidateQueries({ queryKey: ['m', 'today-poll'] });
         queryClient.invalidateQueries({ queryKey: ['m', 'incharge-polls'] });

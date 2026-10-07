@@ -3,7 +3,11 @@
 //
 // Two jobs:
 //  1. App shell caching (static files only) so the installed app opens fast
-//     and shows itself instead of the browser's error page when offline.
+//     and works offline: on install it downloads every file of the build
+//     (all pages of both apps, styles, fonts, icons — the list is written
+//     in by the build, see vite.config.js), so any screen opens without a
+//     connection, not only the ones visited before. The data itself is
+//     saved by the app (src/offline/persist.js), not here.
 //     Everything dynamic — /api/*, /socket.io/*, any cross-origin request
 //     (the backend, Google Fonts) — is bypassed and always goes to the
 //     network. The API stays the only source of truth; this worker never
@@ -15,8 +19,11 @@
 // switched off so it can't fight hot reload, but push still works — that is
 // how notifications are tested locally on http://localhost.
 //
-// Bump CACHE_VERSION on any shell change old clients should drop at once.
-const CACHE_VERSION = 'flexitrack-shell-v2';
+// The build replaces both of these: CACHE_VERSION with an id of the build
+// (so each deploy gets fresh caches and old ones are deleted) and
+// PRECACHE_ASSETS with every file it produced under /assets/.
+const CACHE_VERSION = 'flexitrack-shell-dev';
+const PRECACHE_ASSETS = [];
 const SHELL_CACHE = `${CACHE_VERSION}-app-shell`;
 const ASSET_CACHE = `${CACHE_VERSION}-static-assets`;
 const CURRENT_CACHES = [SHELL_CACHE, ASSET_CACHE];
@@ -33,10 +40,15 @@ self.addEventListener('install', (event) => {
     return;
   }
   event.waitUntil(
-    caches
-      .open(SHELL_CACHE)
-      .then((cache) => cache.addAll(SHELL_URLS))
-      .then(() => self.skipWaiting())
+    (async () => {
+      const shell = await caches.open(SHELL_CACHE);
+      await shell.addAll(SHELL_URLS);
+      // One file failing (flaky network) mustn't abort the install — it is
+      // fetched and cached the first time a page asks for it instead.
+      const assets = await caches.open(ASSET_CACHE);
+      await Promise.allSettled(PRECACHE_ASSETS.map((url) => assets.add(url)));
+      await self.skipWaiting();
+    })()
   );
 });
 
@@ -69,16 +81,18 @@ async function handleNavigation(request) {
     return response;
   } catch {
     const cache = await caches.open(SHELL_CACHE);
-    return (await cache.match('/')) || Response.error();
+    return (await cache.match('/', { ignoreVary: true })) || Response.error();
   }
 }
 
 // Cache-first for build output: filenames are content-hashed by Vite, so a
 // cached copy is never stale — it either matches the current index.html's
 // references exactly or it's for a build no longer linked from anywhere.
+// ignoreVary: hosts send e.g. "Vary: Origin"; a page's module request (with
+// an Origin header) must still match the copy downloaded at install.
 async function handleStaticAsset(request) {
   const cache = await caches.open(ASSET_CACHE);
-  const cached = await cache.match(request);
+  const cached = await cache.match(request, { ignoreVary: true });
   if (cached) return cached;
   const response = await fetch(request);
   if (response.ok) cache.put(request, response.clone());
