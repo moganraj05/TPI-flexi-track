@@ -183,7 +183,7 @@ exports.forgotPassword = async (req, res, next) => {
     await submitResetRequest(req, { employeeId: req.body.employeeId, phoneLast4: req.body.phoneLast4 });
     res.json({
       success: true,
-      message: 'If the details match an account, your request has been sent to your incharge. They will call you with a temporary password.',
+      message: 'If the details match an account, your request has been sent to your incharge (incharges: to Staff & Admin). They will call you with a temporary password.',
     });
   } catch (error) {
     next(error);

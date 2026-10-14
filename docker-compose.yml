@@ -52,7 +52,11 @@ services:
         condition: service_healthy
     # Secrets and app settings (JWT, email, OTP, rate limits). The values in
     # `environment:` below take priority over anything in this file.
-    env_file: ./backend/.env
+    # format: raw = values are used as written, so a `$` in a password isn't
+    # treated as a variable.
+    env_file:
+      - path: ./backend/.env
+        format: raw
     environment:
       NODE_ENV: production
       PORT: 5000

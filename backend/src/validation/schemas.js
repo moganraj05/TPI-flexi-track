@@ -9,10 +9,17 @@
 const { z } = require('zod');
 const { isValidShiftTime } = require('../utils/shift');
 const { getShiftCatalog } = require('../config/shiftCatalog');
+const { passwordRuleProblem } = require('../utils/passwordRules');
 
 const uuid = (label) => z.string().uuid(`Invalid ${label || 'ID'}`);
 const requiredString = (label) => z.string().trim().min(1, `${label} is required`);
-const password = () => z.string().min(6, 'Password must be at least 6 characters');
+// Every chosen password: 8–32 characters with an uppercase letter, a
+// lowercase letter and a special character (utils/passwordRules.js).
+const password = () =>
+  z.string().superRefine((value, ctx) => {
+    const problem = passwordRuleProblem(value);
+    if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem });
+  });
 const shiftTime = () =>
   z.string().refine(isValidShiftTime, 'Shift times must be in HH:mm format (e.g. 08:00)');
 const shiftCode = () => z.enum(getShiftCatalog().map((s) => s.code), { message: 'Invalid shift code' });
@@ -171,14 +178,8 @@ const updateFollowUpBody = z.object({
 const employeeIdParam = z.object({ employeeId: uuid('employee ID') });
 
 // ---- hr self-registration / forgot password ----
-// Stricter than the legacy 6-character rule, for the two public flows only
-// (self-registration and email reset); 72 is bcrypt's input limit.
-const strongPassword = () =>
-  z
-    .string()
-    .min(8, 'Password must be at least 8 characters')
-    .max(72, 'Password must be at most 72 characters')
-    .refine((v) => /[A-Za-z]/.test(v) && /\d/.test(v), 'Password must contain at least one letter and one number');
+// Same rule as every other chosen password.
+const strongPassword = password;
 
 const emailField = () => z.string().trim().toLowerCase().email('Enter a valid email address').max(254);
 const otpCode = () => z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code');
@@ -221,7 +222,9 @@ const inviteTokenBody = z.object({ token: ticketField().max(2000) });
 const changeOwnPasswordBody = z
   .object({
     currentPassword: z.string().max(200).optional(),
-    newPassword: z.string().min(1, 'Enter a new password').max(72, 'Password must be at most 72 characters'),
+    // Rule checked in the controller (ownPasswordProblem), next to the
+    // "different from your old password" check.
+    newPassword: z.string().min(1, 'Enter a new password').max(200),
     confirmPassword: z.string(),
   })
   .refine((b) => b.newPassword === b.confirmPassword, { message: 'Passwords do not match', path: ['confirmPassword'] });

@@ -32,7 +32,18 @@ const DEV = new URL(self.location.href).searchParams.has('dev');
 // Only stable, always-present URLs go here — hashed /assets/*.js|css chunks
 // are cached opportunistically at runtime instead (see fetch handler), since
 // their filenames change on every build and can't be known in advance.
-const SHELL_URLS = ['/', '/manifest.webmanifest', '/favicon.svg', '/icon-192.png', '/icon-512.png'];
+const SHELL_URLS = [
+  '/',
+  '/manifest.webmanifest',
+  '/favicon.svg',
+  '/icon.svg',
+  '/icon-192.png',
+  '/icon-512.png',
+  '/icon-maskable-192.png',
+  '/icon-maskable-512.png',
+  '/apple-touch-icon.png',
+  '/badge-96.png',
+];
 
 self.addEventListener('install', (event) => {
   if (DEV) {
@@ -134,8 +145,11 @@ self.addEventListener('push', (event) => {
   const title = payload.title || 'FlexiTrack';
   const options = {
     body: payload.body || '',
+    // icon: the FlexiTrack logo shown in the notification. badge: the small
+    // status-bar icon — Android draws only its shape, so it's a white
+    // silhouette of the logo on transparent.
     icon: '/icon-192.png',
-    badge: '/icon-192.png',
+    badge: '/badge-96.png',
     // Same tag = the newer alert replaces the older one for the same poll
     // (e.g. the reminder replaces "poll open") instead of stacking up.
     tag: payload.tag || 'flexitrack',

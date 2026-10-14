@@ -112,6 +112,55 @@
   padding-bottom: calc(40px + var(--safe-bottom));
 }
 
+/* Swipe between tabs (components/TabPager.jsx). The current tab scrolls
+   with the page; the tabs on either side wait off-screen, hidden, and only
+   show while a drag or snap is under way. */
+.m-swipe-tabs {
+  touch-action: pan-y pinch-zoom;
+}
+
+.m-tabswipe {
+  position: relative;
+  overflow-x: clip;
+}
+
+.m-tabswipe-panel {
+  position: relative;
+  width: 100%;
+}
+
+.m-tabswipe-side {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  background: var(--bg);
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.m-tabswipe-side[data-pager='prev'] {
+  transform: translate3d(-100%, 0, 0);
+}
+
+.m-tabswipe-side[data-pager='next'] {
+  transform: translate3d(100%, 0, 0);
+}
+
+.m-tabswipe-dragging .m-tabswipe-side,
+.m-tabswipe-settling .m-tabswipe-side {
+  visibility: visible;
+}
+
+.m-tabswipe-dragging .m-tabswipe-panel,
+.m-tabswipe-settling .m-tabswipe-panel {
+  will-change: transform;
+}
+
+.m-tabswipe-settling .m-tabswipe-panel {
+  transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 .m-body {
   padding: 0 16px;
   display: flex;

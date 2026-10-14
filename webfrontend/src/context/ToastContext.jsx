@@ -38,10 +38,10 @@ export function ToastProvider({ children }) {
   );
 
   const toast = useCallback(
-    (message, variant = 'neutral') => {
+    (message, variant = 'neutral', durationMs = 2500) => {
       const id = ++nextId;
       setToasts((prev) => [...prev.slice(-2), { id, message, variant, exiting: false }]);
-      timers.current[id] = setTimeout(() => dismiss(id), 2500);
+      timers.current[id] = setTimeout(() => dismiss(id), durationMs);
       return id;
     },
     [dismiss]

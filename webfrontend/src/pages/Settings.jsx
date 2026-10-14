@@ -27,6 +27,7 @@ import { Avatar } from '../components/common/Avatar';
 import { Badge } from '../components/common/Badge';
 import { Button } from '../components/common/Button';
 import { PasswordInput } from '../components/common/PasswordInput';
+import { PASSWORD_HINT, SAME_AS_OLD_MESSAGE, meetsPasswordRules } from '../utils/passwordRules';
 import { roleTag, isAdminRole, ASSIGNABLE_ROLES } from '../utils/roles';
 
 const roleLabel = roleTag;
@@ -196,8 +197,12 @@ function ChangePasswordCard() {
     e.preventDefault();
     setError('');
 
-    if (newPassword.length < 6) {
-      setError('New password must be at least 6 characters');
+    if (!meetsPasswordRules(newPassword)) {
+      setError(`New password: ${PASSWORD_HINT}`);
+      return;
+    }
+    if (newPassword === currentPassword) {
+      setError(SAME_AS_OLD_MESSAGE);
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -220,7 +225,7 @@ function ChangePasswordCard() {
   };
 
   return (
-    <SettingsCard title="Change password" description="Use at least 6 characters. You'll stay signed in on this browser.">
+    <SettingsCard title="Change password" description={`${PASSWORD_HINT} You'll stay signed in on this browser.`}>
       <form onSubmit={handleSubmit}>
         <Field label="Current password">
           <PasswordInput className="ft-settings-input" style={inputStyle} autoComplete="current-password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} required />

@@ -2,22 +2,16 @@ import { useState } from 'react';
 import { Icon } from './Icon';
 import { Button, PasswordInput } from './ui';
 import { api } from '../api';
+import { PASSWORD_MAX, PASSWORD_RULES } from '../../utils/passwordRules';
 
-// Live checklist mirroring the server's rules (temp-password.service.js) —
-// the server is the one that enforces them; this is only guidance.
-function rulesFor(password, confirm, user) {
+// Live checklist for the shared rule (utils/passwordRules.js) — the server
+// enforces it (and that it isn't the current or temporary password); this
+// is only guidance.
+function rulesFor(password, confirm, current) {
   const pw = password || '';
-  const digits = String(user?.phone || '').replace(/\D/g, '');
   return [
-    { label: 'At least 8 characters', ok: pw.length >= 8 },
-    { label: 'A letter and a number', ok: /[A-Za-z]/.test(pw) && /\d/.test(pw) },
-    {
-      label: 'Not your Employee ID or phone number',
-      ok:
-        pw.length > 0 &&
-        !(user?.employeeId && pw.toLowerCase().includes(user.employeeId.toLowerCase())) &&
-        !(digits.length >= 6 && pw.replace(/\D/g, '').includes(digits.slice(-6))),
-    },
+    ...PASSWORD_RULES.map((r) => ({ label: r.label, ok: r.test(pw) })),
+    ...(current !== undefined ? [{ label: 'Different from your current password', ok: pw.length > 0 && pw !== current }] : []),
     { label: 'Both passwords match', ok: pw.length > 0 && pw === confirm },
   ];
 }
@@ -25,14 +19,14 @@ function rulesFor(password, confirm, user) {
 // "Set your own password" — used by the forced screen after a temporary
 // password (askCurrent = false) and by Profile → Change password
 // (askCurrent = true). Calls onDone({ token, user, message }) on success.
-export function OwnPasswordForm({ user, askCurrent, submitLabel = 'Save password', onDone, onCancel }) {
+export function OwnPasswordForm({ askCurrent, submitLabel = 'Save password', onDone, onCancel }) {
   const [current, setCurrent] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const rules = rulesFor(password, confirm, user);
+  const rules = rulesFor(password, confirm, askCurrent ? current : undefined);
   const allOk = rules.every((r) => r.ok) && (!askCurrent || current.length > 0);
 
   const submit = async (e) => {
@@ -71,14 +65,14 @@ export function OwnPasswordForm({ user, askCurrent, submitLabel = 'Save password
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         autoComplete="new-password"
-        maxLength={72}
+        maxLength={PASSWORD_MAX}
       />
       <PasswordInput
         label="Type it again"
         value={confirm}
         onChange={(e) => setConfirm(e.target.value)}
         autoComplete="new-password"
-        maxLength={72}
+        maxLength={PASSWORD_MAX}
         error={confirm.length > 0 && confirm !== password}
       />
       <ul className="m-rules" aria-label="Password rules">

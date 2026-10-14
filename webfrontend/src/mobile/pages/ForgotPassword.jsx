@@ -42,7 +42,7 @@ export function ForgotPasswordPage() {
         </div>
         <div className="m-login-headline">
           <h1>{sent ? 'Request sent' : 'Forgot password?'}</h1>
-          <p>{sent ? 'Your incharge has been told.' : 'Your incharge can give you a temporary password.'}</p>
+          <p>{sent ? 'Your request has been sent.' : 'Get a temporary password from your incharge or Staff.'}</p>
         </div>
       </div>
 
@@ -51,7 +51,7 @@ export function ForgotPasswordPage() {
           <section className="m-card m-setting-card" aria-live="polite">
             <ol className="m-steps m-steps-lg">
               <li>
-                If the details match your account, your <b>incharge</b> gets your request now.
+                If the details match your account, your request goes to your <b>incharge</b> now (if you are an incharge: to <b>Staff &amp; Admin</b>).
               </li>
               <li>
                 They will <b>call you</b> to check it's really you, then give you a <b>temporary password</b> (it works for 24
@@ -107,7 +107,7 @@ export function ForgotPasswordPage() {
           ) : null}
 
           <Button type="submit" variant="primary" block loading={sending} className="m-btn-cta">
-            Send request to my incharge
+            Send request
           </Button>
           <Link to="/login" className="m-link m-staff-link" style={{ alignSelf: 'center' }}>
             Back to sign in

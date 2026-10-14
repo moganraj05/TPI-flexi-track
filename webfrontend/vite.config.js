@@ -26,7 +26,15 @@ function precacheManifest() {
         .filter((f) => !f.endsWith('.map'))
         .sort()
         .map((f) => `/assets/${f}`)
-      const version = crypto.createHash('sha256').update(files.join('|')).digest('hex').slice(0, 12)
+      // The version also covers the contents of the other public files
+      // (icons, manifest, index.html), whose names never change — so a new
+      // icon or page shell reaches devices that already installed the app.
+      const hash = crypto.createHash('sha256').update(files.join('|'))
+      for (const f of fs.readdirSync(outDir).sort()) {
+        const full = path.join(outDir, f)
+        if (f !== 'sw.js' && fs.statSync(full).isFile()) hash.update(f).update(fs.readFileSync(full))
+      }
+      const version = hash.digest('hex').slice(0, 12)
       const versionLine = "const CACHE_VERSION = 'flexitrack-shell-dev';"
       const assetsLine = 'const PRECACHE_ASSETS = [];'
       let sw = fs.readFileSync(swPath, 'utf8')

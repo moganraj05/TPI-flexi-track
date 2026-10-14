@@ -19,6 +19,7 @@ const { resolveShift, getShiftByTimes, getShiftCatalog, getShiftByCode, formatSh
 const { buildTeamBulkTemplate, parseTeamBulkFile } = require('../services/bulk-import.service');
 const { signToken, revokeSession, renewedToken } = require('../utils/jwt');
 const { comparePassword, hashPassword, DUMMY_HASH } = require('../utils/password');
+const { passwordRuleProblem, SAME_AS_OLD_MESSAGE } = require('../utils/passwordRules');
 const { emitPollUpdate, emitFollowUpUpdate, emitStaffUpdate, emitWorkforceUpdate } = require('../realtime');
 const logger = require('../utils/logger');
 const { recordAudit, diffChanges, personLabel, roleName } = require('../services/audit.service');
@@ -1049,8 +1050,9 @@ exports.updateTeamMember = async (req, res, next) => {
     }
 
     if (password) {
-      if (password.length < 6) {
-        return res.status(400).json({ success: false, message: 'Password must be at least 6 characters' });
+      const passwordProblem = passwordRuleProblem(password);
+      if (passwordProblem) {
+        return res.status(400).json({ success: false, message: passwordProblem });
       }
       // A password typed by someone else is only ever temporary.
       Object.assign(data, (await tempPasswordData('reset', password)).data, { tokenVersion: { increment: 1 } });
@@ -1210,7 +1212,9 @@ exports.importTeamBulk = async (req, res, next) => {
       try {
         if (!row.employeeId) throw new Error('Employee ID is required');
         if (!row.name) throw new Error('Name is required');
-        if (row.password && row.password.length < 6) throw new Error('Password must be at least 6 characters (or leave it blank to generate one)');
+        if (row.password && passwordRuleProblem(row.password)) {
+          throw new Error(`${passwordRuleProblem(row.password)} (or leave it blank to generate one)`);
+        }
 
         const shift = getShiftByCode(row.shiftCode);
         if (!shift) throw new Error(`Invalid shift code "${row.shiftCode || ''}" — use A, B, C, D or E`);
@@ -2212,14 +2216,18 @@ exports.changePassword = async (req, res, next) => {
     if (!currentPassword || !newPassword) {
       return res.status(400).json({ success: false, message: 'Current and new password are required' });
     }
-    if (String(newPassword).length < 6) {
-      return res.status(400).json({ success: false, message: 'New password must be at least 6 characters' });
+    const passwordProblem = passwordRuleProblem(newPassword);
+    if (passwordProblem) {
+      return res.status(400).json({ success: false, message: passwordProblem });
     }
 
     const user = await prisma.user.findUnique({ where: { id: req.user.id } });
     const ok = await comparePassword(currentPassword, user.password);
     if (!ok) {
       return res.status(400).json({ success: false, message: 'Current password is incorrect' });
+    }
+    if (await comparePassword(newPassword, user.password)) {
+      return res.status(400).json({ success: false, message: SAME_AS_OLD_MESSAGE });
     }
 
     await prisma.user.update({ where: { id: user.id }, data: { password: await hashPassword(newPassword) } });

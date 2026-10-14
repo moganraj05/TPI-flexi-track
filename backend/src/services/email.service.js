@@ -237,8 +237,41 @@ function sendStaffInviteEmail({ to, name, roleLabel, invitedBy, link, expiresInH
   return sendEmail({ to, subject, text, html });
 }
 
+// A worker / incharge password reset request that is now with Staff & Admin
+// (an incharge asking, or nobody else acted in time).
+function sendResetRequestStaffEmail({ to, person, escalated, link }) {
+  const subject = escalated
+    ? `Password reset request still waiting: ${person.name}`
+    : `Password reset request: ${person.name}`;
+  const lines = [
+    `Name: ${person.name}`,
+    `Employee ID: ${person.employeeId}`,
+    `Role: ${person.roleLabel}`,
+    `Plant: ${person.plant || '—'}`,
+    `Phone: ${person.phone || '—'}`,
+  ];
+  const intro = escalated
+    ? "This password reset request wasn't handled in time and has moved to Staff & Admin."
+    : `${person.name} can't sign in to FlexiTrack and asked for a password reset.`;
+  const text = `${intro}\n\n${lines.join('\n')}\n\nCall them to confirm it's really them, then issue a temporary password (or reject the request) in FlexiTrack → Password requests:\n${link}`;
+  const html = layout(
+    subject,
+    `<p style="font-size:14px;margin:0 0 12px">${escapeHtml(intro)}</p>
+     <table style="font-size:13px;border-collapse:collapse">${lines
+       .map((l) => {
+         const [k, ...v] = l.split(': ');
+         return `<tr><td style="padding:3px 12px 3px 0;color:#5b6475">${escapeHtml(k)}</td><td style="padding:3px 0;font-weight:600">${escapeHtml(v.join(': '))}</td></tr>`;
+       })
+       .join('')}</table>
+     <p style="font-size:13px;color:#5b6475;margin:16px 0">Call them to confirm it's really them, then issue a temporary password — or reject the request.</p>
+     <a href="${escapeHtml(link)}" style="display:inline-block;background:#264653;color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;padding:10px 18px;border-radius:8px">Open Password requests</a>`
+  );
+  return sendEmail({ to, subject, text, html });
+}
+
 module.exports = {
   EmailNotConfiguredError,
+  sendResetRequestStaffEmail,
   sendStaffInviteEmail,
   isConfigured,
   sendOtpEmail,

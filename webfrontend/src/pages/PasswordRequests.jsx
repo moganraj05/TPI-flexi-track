@@ -28,7 +28,7 @@ const ago = (iso) => {
 const when = (iso) =>
   iso ? new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true }) : '—';
 
-const LEVEL_TEXT = { incharge: 'Incharge', supervisor: 'Plant supervisors', staff: 'HR / admin' };
+const LEVEL_TEXT = { incharge: 'Incharge', supervisor: 'Plant supervisors', staff: 'Staff & Admin' };
 
 function doneStatus(r) {
   if (r.status === 'approved') return r.completed ? ['success', 'Completed'] : ['info', 'Temporary password issued'];

@@ -78,4 +78,4 @@ async function readInviteToken(token) {
   return user;
 }
 
-module.exports = { INVITE_TTL_HOURS, InviteError, createInviteToken, inviteLink, readInviteToken };
+module.exports = { INVITE_TTL_HOURS, InviteError, appBaseUrl, createInviteToken, inviteLink, readInviteToken };

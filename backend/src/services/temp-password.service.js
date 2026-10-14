@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { hashPassword, comparePassword } = require('../utils/password');
+const { passwordRuleProblem, SAME_AS_OLD_MESSAGE } = require('../utils/passwordRules');
 
 // Temporary passwords for the worker app (workers, incharges, supervisors).
 //
@@ -39,26 +40,14 @@ async function tempPasswordData(kind, plain = generateTempPassword()) {
   };
 }
 
-// Rules for a password a worker/incharge chooses themselves. Returns a
-// user-facing problem, or null when it's acceptable.
+// Rules for a password a worker/incharge chooses themselves: the shared rule
+// (utils/passwordRules.js) and not the same as the current or temporary
+// password. Returns a user-facing problem, or null when it's acceptable.
 async function ownPasswordProblem(newPassword, user, currentHash) {
   const pw = String(newPassword || '');
-  if (pw.length < 8) return 'Password must be at least 8 characters';
-  if (pw.length > 72) return 'Password must be at most 72 characters';
-  if (!/[A-Za-z]/.test(pw) || !/\d/.test(pw)) return 'Password must contain at least one letter and one number';
-
-  const lower = pw.toLowerCase();
-  if (user.employeeId && lower.includes(user.employeeId.toLowerCase())) return "Password can't contain your Employee ID";
-  const phoneDigits = String(user.phone || '').replace(/\D/g, '');
-  if (phoneDigits.length >= 6 && pw.replace(/\D/g, '').includes(phoneDigits.slice(-6))) {
-    return "Password can't contain your phone number";
-  }
-  if (['password', 'flexitrack', '12345678', 'qwerty12'].some((weak) => lower.includes(weak))) {
-    return 'Choose a less common password';
-  }
-  if (currentHash && (await comparePassword(pw, currentHash))) {
-    return 'Choose a password different from your current or temporary one';
-  }
+  const problem = passwordRuleProblem(pw);
+  if (problem) return problem;
+  if (currentHash && (await comparePassword(pw, currentHash))) return SAME_AS_OLD_MESSAGE;
   return null;
 }
 

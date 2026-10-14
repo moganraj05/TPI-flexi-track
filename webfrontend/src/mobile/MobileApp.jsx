@@ -2,7 +2,8 @@ import { lazy, Suspense, useEffect } from 'react';
 import { Navigate, Outlet, Route, Routes } from 'react-router-dom';
 import './mobile.css';
 import './fonts';
-import { TabBar } from './components/TabBar';
+import { TabBar, WORKER_TABS, INCHARGE_TABS } from './components/TabBar';
+import { TabPager } from './components/TabPager';
 import { Loading } from './components/ui';
 import { MobileAuthProvider, useMobileAuth } from './context/AuthContext';
 import { MobileRealtimeProvider } from './context/RealtimeContext';
@@ -29,6 +30,22 @@ const InchargePollDetail = lazy(() =>
   import('./pages/incharge/PollDetail').then((m) => ({ default: m.InchargePollDetail }))
 );
 
+// The screen behind each dock tab. TabLayout renders these itself (not
+// through <Outlet />) so the tabs next to the current one are ready to
+// swipe to; their routes below only make the URLs valid.
+const TAB_SCREENS = {
+  '/home': <WorkerHome />,
+  '/history': <WorkerHistory />,
+  '/profile': <ProfilePage />,
+  '/incharge': <InchargeDashboard />,
+  '/incharge/team': <InchargeTeam />,
+  '/incharge/requests': <InchargeRequests />,
+  '/incharge/profile': <ProfilePage />,
+};
+const withScreens = (tabs) => tabs.map((t) => ({ to: t.to, element: TAB_SCREENS[t.to] }));
+const WORKER_PAGES = withScreens(WORKER_TABS);
+const INCHARGE_PAGES = withScreens(INCHARGE_TABS);
+
 // The worker / incharge app — the web version of the Expo mobile app,
 // mounted at "/" by App.jsx (the HR console lives under /staff).
 export default function MobileApp() {
@@ -53,18 +70,18 @@ export default function MobileApp() {
 
                   <Route element={<RequireRole kind="worker" />}>
                     <Route element={<TabLayout />}>
-                      <Route path="home" element={<WorkerHome />} />
-                      <Route path="history" element={<WorkerHistory />} />
-                      <Route path="profile" element={<ProfilePage />} />
+                      <Route path="home" element={null} />
+                      <Route path="history" element={null} />
+                      <Route path="profile" element={null} />
                     </Route>
                   </Route>
 
                   <Route path="incharge" element={<RequireRole kind="incharge" />}>
                     <Route element={<TabLayout />}>
-                      <Route index element={<InchargeDashboard />} />
-                      <Route path="team" element={<InchargeTeam />} />
-                      <Route path="requests" element={<InchargeRequests />} />
-                      <Route path="profile" element={<ProfilePage />} />
+                      <Route index element={null} />
+                      <Route path="team" element={null} />
+                      <Route path="requests" element={null} />
+                      <Route path="profile" element={null} />
                     </Route>
                     <Route path="poll/:id" element={<InchargePollDetail />} />
                   </Route>
@@ -119,9 +136,7 @@ function TabLayout() {
   const incharge = isInchargeRole(user?.role);
   return (
     <>
-      <Suspense fallback={<Loading />}>
-        <Outlet />
-      </Suspense>
+      <TabPager tabs={incharge ? INCHARGE_PAGES : WORKER_PAGES} />
       {incharge ? <InchargeTabBar /> : <WorkerTabBar />}
     </>
   );

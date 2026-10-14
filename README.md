@@ -157,18 +157,30 @@ like `K7MQ-42XA`, shown once to whoever created it (Excel import: a
 downloadable list of the new logins). It works for 7 days.
 
 The first sign-in with a temporary password opens **Set your password**;
-the server refuses every other request until it's done. Rules: 8+
-characters with a letter and a number, not the Employee ID / phone number /
-a common password, not the same as before. Setting it signs out every other
-session.
+the server refuses every other request until it's done. Setting it signs
+out every other session.
+
+**Password rule (everywhere a password is chosen** — worker/incharge first
+sign-in, forgot password, Profile, staff registration, invitation, email
+reset and Settings): 8–32 characters with at least one uppercase letter, one
+lowercase letter and one special character, and not the same as the old
+password. No other restrictions. Defined once in
+`backend/src/utils/passwordRules.js` (mirrored for the live checklist in
+`webfrontend/src/utils/passwordRules.js`).
 
 - Forgot password (self-service): **Forgot password?** on the sign-in page
   (`/forgot`). The person enters their Employee ID + the last 4 digits of
   the phone number on file and always sees the same "request sent" answer
-  (it never reveals whether the account exists). The request goes to their
-  incharge — or, for incharges, supervisors and workers without an active
-  incharge, to the plant's supervisors — as a push notification and a badge
-  on the **Requests** tab. The incharge calls them, ticks "I confirmed it's
+  (it never reveals whether the account exists). Where it goes:
+  - a **worker** → their incharge (push notification + badge on the
+    **Requests** tab); a worker without an active incharge → the plant's
+    supervisors;
+  - an **incharge or supervisor** → straight to **Staff & Admin**.
+
+  Whenever a request reaches Staff & Admin, every active Staff / Admin login
+  with an email address gets an email (with a button to Password requests),
+  and an open staff console pops up a message and updates its red badge.
+  The incharge (or Staff / Admin) calls them, ticks "I confirmed it's
   really them", then **Reset password** (a 24-hour temporary password, shown
   once) or **Reject** with a reason. Status: waiting → temporary password
   issued → completed (they set their own password); also rejected, expired
@@ -178,9 +190,9 @@ session.
   Every request, approval and rejection is in the audit log.
 - Moving up: a request nobody acts on within 12 hours
   (`RESET_REQUEST_ESCALATE_HOURS`) moves from the incharge to the plant's
-  supervisors, then to HR; the new handlers get a push notification and the
-  incharge still sees it, marked overdue. A supervisor's own request, or one
-  from a plant with no active supervisor, goes straight to HR. A background
+  supervisors, then to Staff & Admin (emailed as "still waiting"); the new
+  handlers are notified and the incharge still sees it, marked overdue.
+  Supervisors only ever handle workers' requests. A background
   job checks every 5 minutes (`RESET_REQUEST_CHECK_INTERVAL_MS`) and also
   expires requests after 48 hours; both are recorded in the audit log as
   "FlexiTrack (automatic)".

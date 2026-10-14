@@ -1,13 +1,14 @@
 import { NavLink } from 'react-router-dom';
 import { Icon } from './Icon';
 
-const WORKER_TABS = [
+// Also the order you swipe through them (TabPager in MobileApp.jsx).
+export const WORKER_TABS = [
   { to: '/home', label: 'Poll', icon: 'clipboard', dotKey: 'poll' },
   { to: '/history', label: 'History', icon: 'calendar' },
   { to: '/profile', label: 'Profile', icon: 'person' },
 ];
 
-const INCHARGE_TABS = [
+export const INCHARGE_TABS = [
   { to: '/incharge', label: 'Dashboard', icon: 'grid', end: true },
   { to: '/incharge/team', label: 'Team', icon: 'people' },
   { to: '/incharge/requests', label: 'Requests', icon: 'key', badgeKey: 'requests' },

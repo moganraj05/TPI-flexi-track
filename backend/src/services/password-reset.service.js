@@ -3,7 +3,9 @@ const prisma = require('../config/prisma');
 const logger = require('../utils/logger');
 const { notifyUsers } = require('./notification.service');
 const { emitResetRequestUpdate } = require('../realtime');
-const { recordAudit, personLabel } = require('./audit.service');
+const { recordAudit, personLabel, roleName } = require('./audit.service');
+const { sendResetRequestStaffEmail } = require('./email.service');
+const { appBaseUrl } = require('./staff-invite.service');
 
 // Worker-app "Forgot password?" requests.
 //
@@ -11,9 +13,11 @@ const { recordAudit, personLabel } = require('./audit.service');
 // page with their Employee ID + the last 4 digits of the phone number on
 // file. The request goes to whoever can confirm who they are (its "level"):
 //   incharge   - a worker's own (active) incharge
-//   supervisor - the plant's supervisors (no active incharge, or an incharge asking)
-//   staff      - HR / admin in the staff console (a supervisor asking, or a
-//                plant with no active supervisor)
+//   supervisor - the plant's supervisors (a worker without an active incharge)
+//   staff      - Staff & Admin in the staff console: every incharge or
+//                supervisor asking, and workers whose plant has nobody else
+// Requests that reach Staff & Admin are also emailed to every active Staff
+// and Admin login, and pop up live in the open console.
 // They call the person, then issue a temporary password (incharge app
 // Requests tab, or the staff console's Password requests page) or reject it.
 // Nobody acting within ESCALATE_AFTER moves it up one level; HR/admin can
@@ -84,8 +88,9 @@ function appHandlersWhere(request) {
 }
 
 // Can this signed-in person see and act on the request? (`request.user`
-// must be loaded.) HR / admin: any request. Incharge: requests sent to
-// them. Supervisor: also everyone in their plant except other supervisors.
+// must be loaded.) Staff & Admin: any request. Incharge: requests sent to
+// them. Supervisor: also the workers of their plant (never incharges or
+// other supervisors — those go to Staff & Admin).
 function canHandle(handler, request) {
   if (!handler || handler.id === request.userId) return false;
   if (isStaff(handler)) return true;
@@ -94,7 +99,7 @@ function canHandle(handler, request) {
     handler.role === 'supervisor' &&
     !!request.departmentId &&
     handler.departmentId === request.departmentId &&
-    request.user?.role !== 'supervisor'
+    request.user?.role === 'worker'
   );
 }
 
@@ -102,9 +107,42 @@ function canHandle(handler, request) {
 function visibleWhere(handler) {
   const or = [{ routedToId: handler.id }];
   if (handler.role === 'supervisor' && handler.departmentId) {
-    or.push({ departmentId: handler.departmentId, user: { role: { not: 'supervisor' } } });
+    or.push({ departmentId: handler.departmentId, user: { role: 'worker' } });
   }
   return { OR: or, userId: { not: handler.id } };
+}
+
+// Emails a request that is now with Staff & Admin to every active, approved
+// Staff / Admin login that has an email address. A failed email is logged,
+// never fatal — the request is still on the Password requests page.
+async function emailStaff(request, { escalated }) {
+  const [person, recipients] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: request.userId },
+      select: { name: true, employeeId: true, phone: true, role: true, department: { select: { name: true, code: true } } },
+    }),
+    prisma.user.findMany({
+      where: { role: { in: STAFF_ROLES }, isActive: true, approvalStatus: 'approved', mustSetPassword: false, email: { not: null } },
+      select: { email: true },
+    }),
+  ]);
+  if (!person || recipients.length === 0) return;
+  const details = {
+    name: person.name,
+    employeeId: person.employeeId,
+    phone: person.phone,
+    roleLabel: roleName(person.role),
+    plant: person.department ? `${person.department.name} (${person.department.code})` : null,
+  };
+  const link = `${appBaseUrl()}/staff/app/password-requests`;
+  const results = await Promise.allSettled(
+    recipients.map((r) => sendResetRequestStaffEmail({ to: r.email, person: details, escalated, link }))
+  );
+  const failed = results.filter((r) => r.status === 'rejected');
+  if (failed.length) {
+    logger.error('reset_request.staff_email_failed', { requestId: request.id, failed: failed.length, error: failed[0].reason?.message });
+  }
+  logger.info('reset_request.staff_emailed', { requestId: request.id, sent: results.length - failed.length });
 }
 
 async function notifyHandlers(request, person, { escalated = false } = {}) {
@@ -121,8 +159,10 @@ async function notifyHandlers(request, person, { escalated = false } = {}) {
         ttlSeconds: 12 * 60 * 60,
       });
     } else {
-      // Staff console: a live badge on "Password requests", plus a push to
-      // any HR/admin browser that turned notifications on.
+      // Staff & Admin: an email to every active login, a live badge and
+      // pop-up in the open console, plus a push to any browser that turned
+      // notifications on.
+      await emailStaff(request, { escalated });
       await notifyUsers(
         { role: { in: STAFF_ROLES }, isActive: true },
         {
@@ -144,7 +184,7 @@ async function notifyHandlers(request, person, { escalated = false } = {}) {
 const LEVEL_PHRASE = {
   incharge: 'their incharge',
   supervisor: "the plant's supervisors",
-  staff: 'HR / admin',
+  staff: 'Staff & Admin',
 };
 
 const lastFour = (value) => String(value || '').replace(/\D/g, '').slice(-4);
@@ -201,9 +241,12 @@ async function submitResetRequest(req, { employeeId, phoneLast4 }) {
       const incharge = await prisma.user.findFirst({ where: { id: user.inchargeId, isActive: true }, select: { id: true } });
       routedToId = incharge?.id || null;
     }
+    // Incharges and supervisors always go straight to Staff & Admin; a
+    // worker without an active incharge goes to the plant's supervisors
+    // (or Staff & Admin when the plant has none).
     let level = 'incharge';
     if (!routedToId) {
-      level = user.role !== 'supervisor' && (await plantHasSupervisor(user.departmentId, user.id)) ? 'supervisor' : 'staff';
+      level = user.role === 'worker' && (await plantHasSupervisor(user.departmentId, user.id)) ? 'supervisor' : 'staff';
     }
     request = await prisma.passwordResetRequest.create({
       data: { ...meta, userId: user.id, departmentId: user.departmentId, routedToId, level, expiresAt: new Date(now.getTime() + REQUEST_TTL_MS) },
@@ -244,7 +287,7 @@ async function escalateOverdue() {
   let moved = 0;
   for (const r of overdue) {
     let next = 'staff';
-    if (r.level === 'incharge' && r.user.role !== 'supervisor' && (await plantHasSupervisor(r.departmentId, r.userId))) {
+    if (r.level === 'incharge' && r.user.role === 'worker' && (await plantHasSupervisor(r.departmentId, r.userId))) {
       next = 'supervisor';
     }
     const escalatedAt = new Date();

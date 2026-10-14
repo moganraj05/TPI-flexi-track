@@ -49,7 +49,7 @@ const DETAIL_LABELS = {
   from: 'Moved from',
   to: 'Moved to',
 };
-const LEVEL_LABELS = { incharge: 'Their incharge', supervisor: "The plant's supervisors", staff: 'HR / admin' };
+const LEVEL_LABELS = { incharge: 'Their incharge', supervisor: "The plant's supervisors", staff: 'Staff & Admin' };
 const REASON_LABELS = {
   unknown_email: 'No account with this email',
   wrong_password: 'Wrong password',

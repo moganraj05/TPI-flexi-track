@@ -5,6 +5,7 @@ const { notificationChannelSelect, hasNotificationChannel } = require('../servic
 const { notifyPollClosed } = require('../services/poll-notifications.service');
 const { recordAudit, diffChanges, personLabel } = require('../services/audit.service');
 const { tempPasswordData } = require('../services/temp-password.service');
+const { passwordRuleProblem } = require('../utils/passwordRules');
 
 // Audit snapshot of a team worker (teamWorkerSelect rows).
 const workerAuditSnapshot = (w) => ({
@@ -280,11 +281,8 @@ exports.createTeamWorker = async (req, res, next) => {
       });
     }
 
-    if (password && password.length < 6) {
-      return res.status(400).json({
-        success: false,
-        message: 'Password must be at least 6 characters',
-      });
+    if (password && passwordRuleProblem(password)) {
+      return res.status(400).json({ success: false, message: passwordRuleProblem(password) });
     }
 
     const shift = resolveShift(req.body, DEFAULT_SHIFT_START, DEFAULT_SHIFT_END);

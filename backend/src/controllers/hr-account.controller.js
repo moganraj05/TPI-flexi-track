@@ -1,6 +1,7 @@
 const prisma = require('../config/prisma');
 const logger = require('../utils/logger');
-const { hashPassword } = require('../utils/password');
+const { hashPassword, comparePassword } = require('../utils/password');
+const { SAME_AS_OLD_MESSAGE } = require('../utils/passwordRules');
 const {
   OtpError,
   OTP_TTL_MINUTES,
@@ -268,6 +269,11 @@ exports.verifyResetOtp = handle(async (req, res) => {
 // bump), in the same transaction that burns the ticket.
 exports.resetPassword = handle(async (req, res) => {
   const otp = await readTicket(req.body.ticket, 'reset_password');
+  // Checked before the code is used up, so they can just pick another one.
+  const existing = await prisma.user.findUnique({ where: { email: otp.email }, select: { password: true } });
+  if (existing?.password && (await comparePassword(req.body.password, existing.password))) {
+    throw new OtpError(400, SAME_AS_OLD_MESSAGE);
+  }
   const passwordHash = await hashPassword(req.body.password);
 
   const user = await prisma.$transaction(async (tx) => {

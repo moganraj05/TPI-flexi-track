@@ -4,6 +4,7 @@ import { theme } from '../../theme';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 import { OfflineBanner } from './OfflineBanner';
+import { ResetRequestAlerts } from './ResetRequestAlerts';
 import { LiveStatusProvider } from '../../context/LiveStatusContext';
 import { ToastProvider } from '../../context/ToastContext';
 import { CenteredSpinner } from '../common/Spinner';
@@ -63,6 +64,7 @@ export function AppShell() {
           <Sidebar collapsed={!compact && collapsed} drawer={compact} open={drawerOpen} onClose={() => setDrawerOpen(false)} />
           <div className="ft-main" style={theme.mainCol}>
             <OfflineBanner />
+            <ResetRequestAlerts />
             <Topbar compact={compact} sidebarCollapsed={compact ? !drawerOpen : collapsed} onToggleSidebar={toggleSidebar} />
             <main ref={contentRef} className="ft-content" style={theme.content}>
               {/* Sidebar/Topbar stay mounted across navigation; only this

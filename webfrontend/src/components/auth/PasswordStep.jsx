@@ -1,16 +1,12 @@
 import { useState } from 'react';
 import { theme, SUCCESS } from '../../theme';
 import { PasswordInput } from '../common/PasswordInput';
+import { PASSWORD_MAX, PASSWORD_RULES, meetsPasswordRules } from '../../utils/passwordRules';
 
-// Mirrors the backend's strongPassword() rule in validation/schemas.js —
-// the server is the one that enforces it; this is only live feedback.
-const RULES = [
-  { label: 'At least 8 characters', test: (v) => v.length >= 8 },
-  { label: 'At least one letter', test: (v) => /[A-Za-z]/.test(v) },
-  { label: 'At least one number', test: (v) => /\d/.test(v) },
-];
-
-const isStrongPassword = (v) => RULES.every((r) => r.test(v)) && v.length <= 72;
+// The shared rule (utils/passwordRules.js) — the server enforces it; this is
+// only live feedback.
+const RULES = PASSWORD_RULES;
+const isStrongPassword = meetsPasswordRules;
 
 // Set-password step shared by registration and forgot password.
 // `onSubmit({ password, confirmPassword })` should throw an Error with a
@@ -57,7 +53,7 @@ export function PasswordStep({ submitLabel, onSubmit }) {
         onChange={(e) => setPassword(e.target.value)}
         autoComplete="new-password"
         autoFocus
-        maxLength={72}
+        maxLength={PASSWORD_MAX}
         style={theme.input}
         className="ft-login-input"
       />
@@ -72,7 +68,7 @@ export function PasswordStep({ submitLabel, onSubmit }) {
         value={confirmPassword}
         onChange={(e) => setConfirmPassword(e.target.value)}
         autoComplete="new-password"
-        maxLength={72}
+        maxLength={PASSWORD_MAX}
         style={{ ...theme.input, ...(mismatch ? { borderColor: theme.errorText.color } : null) }}
         className="ft-login-input"
       />
